@@ -35,7 +35,8 @@ DEFAULT_CONFIG = {
     "text_replacements": [("Trane U.S. Inc.", "KCC Manufacturing"),
                           ("Trane", "KCC")],
     # regex swaps, applied before everything (e.g. genericise the controller name)
-    "regex_replacements": [(r"Symbio\s+\d+\s*-\s*Horizon", "KCC program")],
+    "regex_replacements": [(r"Symbio\s+\d+\s*-\s*Horizon", "KCC program"),
+                           (r"Installed(\s+by\s+)Others", r"Installed\1KCC")],
     # whole-word product brand swap ("Horizontal" is never matched)
     "brand_replacements": {"Horizon": "Viking"},
     "drop_trademark": True,
