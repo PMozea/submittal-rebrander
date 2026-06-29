@@ -31,8 +31,13 @@ import fitz  # PyMuPDF
 TM = "\u2122"
 
 DEFAULT_CONFIG = {
-    "text_replacements": [("Trane", "KCC")],
-    "brand_replacements": {"Horizon": "KCC"},
+    # literal swaps, applied in order (most specific first)
+    "text_replacements": [("Trane U.S. Inc.", "KCC Manufacturing"),
+                          ("Trane", "KCC")],
+    # regex swaps, applied before everything (e.g. genericise the controller name)
+    "regex_replacements": [(r"Symbio\s+\d+\s*-\s*Horizon", "KCC program")],
+    # whole-word product brand swap ("Horizontal" is never matched)
+    "brand_replacements": {"Horizon": "Viking"},
     "drop_trademark": True,
     "scope_to_trane_pages": True,
     "page_markers": ["Trane Equipment Submittal", "by Trane / Installed",
@@ -47,9 +52,11 @@ DEFAULT_CONFIG = {
 
 def _apply(text, cfg):
     out = text
-    for a, b in cfg["text_replacements"]:
+    for pat, rep in cfg.get("regex_replacements", []):   # run first (most specific)
+        out = re.sub(pat, rep, out)
+    for a, b in cfg["text_replacements"]:                 # literal, in order
         out = out.replace(a, b)
-    for brand, tgt in cfg["brand_replacements"].items():
+    for brand, tgt in cfg["brand_replacements"].items():  # whole-word brand
         out = re.sub(r"\b" + re.escape(brand) + r"\b", tgt, out)
     if cfg.get("drop_trademark", True):
         out = out.replace(TM, "")
