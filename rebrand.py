@@ -36,6 +36,7 @@ DEFAULT_CONFIG = {
                           ("Trane", "KCC")],
     # regex swaps, applied before everything (e.g. genericise the controller name)
     "regex_replacements": [(r"Symbio\s+\d+\s*-\s*Horizon", "KCC program"),
+                           (r"\s*/\s*Thrive\s+v[\d.]+", ""),
                            (r"Installed(\s+by\s+)Others", r"Installed\1KCC")],
     # whole-word product brand swap ("Horizontal" is never matched)
     "brand_replacements": {"Horizon": "Viking"},
