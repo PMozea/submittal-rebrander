@@ -68,24 +68,16 @@ def _alias(font):
     return "hebo" if "bold" in font.lower() else "helv"
 
 
-def _image_is_trane(doc, xref, rects, cfg):
-    try:
-        raw = hashlib.md5(doc.extract_image(xref)["image"]).hexdigest()
-    except Exception:
-        raw = None
-    ph, dims = None, None
-    try:
-        pm = fitz.Pixmap(doc, xref)
-        ph, dims = hashlib.md5(pm.samples).hexdigest(), (pm.width, pm.height)
+def _image_is_trane(doc, xref, w, h, rects, cfg):
+    # Cheap reject by native pixel size first (metadata only - no image decode).
+    if (w, h) not in cfg["trane_logo_dims"]:
+        return False
+    try:                                    # confirm by raw-bytes hash (no decode)
+        if hashlib.md5(doc.extract_image(xref)["image"]).hexdigest() in cfg["trane_logo_hashes"]:
+            return True
     except Exception:
         pass
-    if raw in cfg["trane_logo_hashes"] or ph in cfg["trane_logo_hashes"]:
-        return True
-    if dims in cfg["trane_logo_dims"]:
-        for r in rects:
-            if r.y0 < 140 and r.x0 < 240:
-                return True
-    return False
+    return any(r.y0 < 140 and r.x0 < 240 for r in rects)   # header-position fallback
 
 
 def rebrand_pdf(in_path, out_path, logo_path, config=None):
@@ -98,9 +90,11 @@ def rebrand_pdf(in_path, out_path, logo_path, config=None):
     for pno in range(len(doc)):
         page = doc[pno]
         for img in page.get_images(full=True):
-            xref = img[0]
+            xref, w, h = img[0], img[2], img[3]
+            if (w, h) not in cfg["trane_logo_dims"]:
+                continue                    # fast reject without decoding/geometry
             rects = page.get_image_rects(xref)
-            if _image_is_trane(doc, xref, rects, cfg):
+            if _image_is_trane(doc, xref, w, h, rects, cfg):
                 logo_pages.add(pno)
                 for r in rects:
                     logo_jobs.append((pno, xref, r))
