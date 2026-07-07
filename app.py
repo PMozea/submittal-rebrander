@@ -13,7 +13,7 @@ import tempfile
 import fitz
 import streamlit as st
 
-from rebrand import rebrand_pdf
+from rebrand import rebrand_pdf, DRAWING_CONFIG
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_LOGO = os.path.join(HERE, "kcc_logo.png")
@@ -58,6 +58,7 @@ st.caption("Upload a Trane equipment submittal. Every 'Trane' mention and the "
 
 with st.sidebar:
     st.header("Options")
+    doc_type = st.radio("Document type", ["Submittal", "Drawing"])
     custom_logo = st.file_uploader("Replacement logo (optional)",
                                    type=["png", "jpg", "jpeg"])
     st.markdown("Leave blank to use the built-in KCC logo.")
@@ -66,7 +67,7 @@ with st.sidebar:
                 "logo detection and tight model cells are the parts most worth a "
                 "glance.")
 
-uploaded = st.file_uploader("Trane submittal (PDF)", type=["pdf"])
+uploaded = st.file_uploader("Trane submittal or drawing (PDF)", type=["pdf"])
 
 
 def _png(path, page=0, zoom=1.4):
@@ -89,7 +90,8 @@ if uploaded is not None:
                 fh.write(custom_logo.getbuffer())
 
         with st.spinner("Rebranding..."):
-            report = rebrand_pdf(in_path, out_path, logo_path)
+            cfg = DRAWING_CONFIG if doc_type == "Drawing" else None
+            report = rebrand_pdf(in_path, out_path, logo_path, config=cfg)
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Text replacements", len(report["text"]))

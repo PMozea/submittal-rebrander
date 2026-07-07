@@ -51,6 +51,20 @@ DEFAULT_CONFIG = {
     "trane_logo_dims": [(207, 70)],           # fallback: pixel WxH + header pos
 }
 
+# Profile for mechanical drawings: swap the (different) title-block Trane logo and
+# change any "Trane" text to KCC. No Horizon/controller/footer rules, and no
+# submittal-footer scoping (drawings don't have that footer, so process all pages).
+DRAWING_CONFIG = {
+    "text_replacements": [("Trane", "KCC")],
+    "regex_replacements": [],
+    "brand_replacements": {},
+    "drop_trademark": True,
+    "scope_to_trane_pages": False,
+    "page_markers": [],
+    "trane_logo_hashes": {"53d7abf3fbd7230ab0b4c8d9af3c6e9e"},   # drawing title-block logo
+    "trane_logo_dims": [(548, 211)],
+}
+
 
 def _apply(text, cfg):
     out = text
@@ -225,12 +239,13 @@ def rebrand_pdf(in_path, out_path, logo_path, config=None):
 
 
 def _cli():
-    ap = argparse.ArgumentParser(description="Rebrand a Trane submittal to KCC.")
+    ap = argparse.ArgumentParser(description="Rebrand a Trane submittal or drawing to KCC.")
     ap.add_argument("input"); ap.add_argument("output", nargs="?")
     ap.add_argument("--logo", default=os.path.join(os.path.dirname(__file__), "kcc_logo.png"))
+    ap.add_argument("--drawing", action="store_true", help="use the drawing profile")
     a = ap.parse_args()
     out = a.output or re.sub(r"\.pdf$", "_KCC.pdf", a.input, flags=re.I)
-    rep = rebrand_pdf(a.input, out, a.logo)
+    rep = rebrand_pdf(a.input, out, a.logo, config=(DRAWING_CONFIG if a.drawing else None))
     print(f"Wrote {out}")
     print(f"  Trane pages: {rep['scope_pages']}")
     print(f"  text runs redrawn: {len(rep['text'])}")
