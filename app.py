@@ -104,7 +104,7 @@ if uploaded is not None:
         with open(out_path, "rb") as fh:
             data = fh.read()
         out_name = uploaded.name.rsplit(".", 1)[0] + "_KCC.pdf"
-        st.download_button("Download KCC submittal", data=data,
+        st.download_button(f"Download KCC {doc_type.lower()}", data=data,
                            file_name=out_name, mime="application/pdf",
                            type="primary")
 
