@@ -74,9 +74,15 @@ DRAWING_CONFIG = {
 # which are line-art, not glyphs) from a shipped template PDF, anchored to the standard
 # "DO NOT SCALE DRAWING." line so it lands in the right spot on any KCC drawing sheet.
 NOTES_TEMPLATE = os.path.join(os.path.dirname(__file__), "tolerance_notes.pdf")
-_NOTES_W, _NOTES_H = 204.20, 27.80            # template page size (pt)
+_NOTES_W, _NOTES_H = 204.70, 27.10            # template page size (pt)
 _NOTES_OFF_X, _NOTES_OFF_Y1 = -0.84, -6.64    # block offset vs the DIMENSIONS anchor origin
 _NOTES_ANCHORS = ("DO NOT SCALE DRAWING", "DIMENSIONS ARE IN INCHES")
+# notes-cell borders relative to the DIMENSIONS anchor origin. The left frame and the
+# bottom rule (DIMENSIONS-cell top) already exist on the sheet, so we only draw the
+# missing top rule and right vertical to close the box at full cell width.
+_NOTES_TOP_Y_OFF, _NOTES_BOT_Y_OFF = -34.16, -6.08
+_NOTES_LEFT_X_OFF, _NOTES_RIGHT_X_OFF = -2.10, 249.90
+_NOTES_LINE_W = 0.51
 
 
 def _page_has_notes(page):
@@ -111,6 +117,14 @@ def _stamp_tolerance_notes(doc, tmpl_path, report):
             x0 = ax + _NOTES_OFF_X
             y1 = ay + _NOTES_OFF_Y1
             page.show_pdf_page(fitz.Rect(x0, y1 - _NOTES_H, x0 + _NOTES_W, y1), tmpl, 0)
+            # close the cell: full-width top rule + right vertical (left frame &
+            # bottom rule already exist on the sheet)
+            top_y = ay + _NOTES_TOP_Y_OFF
+            bot_y = ay + _NOTES_BOT_Y_OFF
+            lx = ax + _NOTES_LEFT_X_OFF
+            rx = ax + _NOTES_RIGHT_X_OFF
+            page.draw_line((lx, top_y), (rx, top_y), color=(0, 0, 0), width=_NOTES_LINE_W)
+            page.draw_line((rx, top_y), (rx, bot_y), color=(0, 0, 0), width=_NOTES_LINE_W)
             report["notes"].append(pno + 1)
 
 
