@@ -61,9 +61,57 @@ DRAWING_CONFIG = {
     "drop_trademark": True,
     "scope_to_trane_pages": False,
     "page_markers": [],
-    "trane_logo_hashes": {"53d7abf3fbd7230ab0b4c8d9af3c6e9e"},   # drawing title-block logo
-    "trane_logo_dims": [(548, 211)],
+    "trane_logo_hashes": {"53d7abf3fbd7230ab0b4c8d9af3c6e9e",   # drawing title-block logo (PNG, 548x211)
+                          "f1739bdab6285b34d894a616dd89b5ab"},  # drawing title-block logo (JPEG, 639x245)
+    "trane_logo_dims": [(548, 211), (639, 245)],
+    "color_fallback": True,   # if no fingerprint match, find the logo by its orange signature
 }
+
+
+# --- Optional "tolerance notes" block --------------------------------------------
+# Some drawings need the standard tolerance NOTES; some don't. When requested, we stamp
+# the exact vector block (correct CenturyGothic font + the degree/plus-minus symbols,
+# which are line-art, not glyphs) from a shipped template PDF, anchored to the standard
+# "DO NOT SCALE DRAWING." line so it lands in the right spot on any KCC drawing sheet.
+NOTES_TEMPLATE = os.path.join(os.path.dirname(__file__), "tolerance_notes.pdf")
+_NOTES_W, _NOTES_H = 204.20, 27.80            # template page size (pt)
+_NOTES_OFF_X, _NOTES_OFF_Y1 = -0.84, -6.64    # block offset vs the DIMENSIONS anchor origin
+_NOTES_ANCHORS = ("DO NOT SCALE DRAWING", "DIMENSIONS ARE IN INCHES")
+
+
+def _page_has_notes(page):
+    t = page.get_text()
+    return "NOTES:" in t and "UNLESS OTHERWISE SPECIFIED" in t
+
+
+def _notes_anchor(page):
+    for blk in page.get_text("dict")["blocks"]:
+        for line in blk.get("lines", []):
+            for s in line["spans"]:
+                if any(m in s["text"] for m in _NOTES_ANCHORS):
+                    return s["origin"]
+    return None
+
+
+def _stamp_tolerance_notes(doc, tmpl_path, report):
+    if not os.path.exists(tmpl_path):
+        report["warnings"].append(f"Tolerance-notes template not found: {tmpl_path}")
+        return
+    with fitz.open(tmpl_path) as tmpl:
+        for pno in range(len(doc)):
+            page = doc[pno]
+            if _page_has_notes(page):                       # idempotent: never double-stamp
+                report["warnings"].append(f"p{pno+1}: tolerance notes already present - not added.")
+                continue
+            anc = _notes_anchor(page)
+            if anc is None:
+                report["warnings"].append(f"p{pno+1}: no DIMENSIONS anchor - tolerance notes not added.")
+                continue
+            ax, ay = anc
+            x0 = ax + _NOTES_OFF_X
+            y1 = ay + _NOTES_OFF_Y1
+            page.show_pdf_page(fitz.Rect(x0, y1 - _NOTES_H, x0 + _NOTES_W, y1), tmpl, 0)
+            report["notes"].append(pno + 1)
 
 
 def _apply(text, cfg):
@@ -95,9 +143,58 @@ def _image_is_trane(doc, xref, w, h, rects, cfg):
     return any(r.y0 < 140 and r.x0 < 240 for r in rects)   # header-position fallback
 
 
-def rebrand_pdf(in_path, out_path, logo_path, config=None):
+def _warm_orange_fraction(doc, xref, sample_target=160):
+    """Fraction of pixels that are Trane-orange (warm, red-dominant). Independent of
+    image resolution/encoding. Samples on a grid so large images stay fast."""
+    try:
+        pix = fitz.Pixmap(doc, xref)
+    except Exception:
+        return 0.0
+    if pix.alpha:
+        pix = fitz.Pixmap(pix, 0)          # drop alpha
+    if pix.n < 3:                          # grayscale/mask -> not the logo
+        return 0.0
+    samp, stride, n = pix.samples, pix.stride, pix.n
+    step_x = max(1, pix.width // sample_target)
+    step_y = max(1, pix.height // sample_target)
+    warm = tot = 0
+    for y in range(0, pix.height, step_y):
+        base = y * stride
+        for x in range(0, pix.width, step_x):
+            o = base + x * n
+            r, g, b = samp[o], samp[o + 1], samp[o + 2]
+            tot += 1
+            if r > 230 and g > 230 and b > 230:      # white background
+                continue
+            if r >= 150 and r > g + 30 and g >= b and b < 160 and (r - b) > 60:
+                warm += 1
+    return warm / tot if tot else 0.0
+
+
+def _image_is_trane_by_color(doc, xref, w, h, rects, page):
+    """Fingerprint-free fallback: a wide, small, edge-placed, strongly-orange image is
+    the Trane logo regardless of its resolution/encoding. All guards must agree."""
+    if h <= 0:
+        return False
+    if not (1.8 <= w / h <= 3.3):            # Trane wordmark family (~2.6-3.0)
+        return False
+    pw, ph = page.rect.width, page.rect.height
+    ok_geom = False
+    for r in rects:                          # small footprint, hugging a page edge
+        small = r.width < 0.55 * pw and (r.width * r.height) < 0.15 * (pw * ph)
+        edge = min(r.x0, pw - r.x1) < 0.15 * pw or min(r.y0, ph - r.y1) < 0.15 * ph
+        if small and edge:
+            ok_geom = True
+            break
+    if not ok_geom:
+        return False
+    return _warm_orange_fraction(doc, xref) >= 0.12
+
+
+def rebrand_pdf(in_path, out_path, logo_path, config=None,
+                add_notes=False, notes_template=None):
     cfg = {**DEFAULT_CONFIG, **(config or {})}
-    report = {"text": [], "logos": [], "warnings": [], "scope_pages": []}
+    report = {"text": [], "logos": [], "warnings": [], "scope_pages": [], "notes": []}
     doc = fitz.open(in_path)
 
     # ---- find the Trane logo(s) by fingerprint ----
@@ -113,6 +210,28 @@ def rebrand_pdf(in_path, out_path, logo_path, config=None):
                 logo_pages.add(pno)
                 for r in rects:
                     logo_jobs.append((pno, xref, r))
+
+    # ---- fallback: no fingerprint match -> find the logo by its orange signature ----
+    # (drawing profile only; runs solely when the exact pass found nothing, so it can
+    #  never override correct detection. Reports the new fingerprint to promote later.)
+    if not logo_jobs and cfg.get("color_fallback"):
+        for pno in range(len(doc)):
+            page = doc[pno]
+            for img in page.get_images(full=True):
+                xref, w, h = img[0], img[2], img[3]
+                rects = page.get_image_rects(xref)
+                if _image_is_trane_by_color(doc, xref, w, h, rects, page):
+                    logo_pages.add(pno)
+                    for r in rects:
+                        logo_jobs.append((pno, xref, r))
+                    try:
+                        fp = hashlib.md5(doc.extract_image(xref)["image"]).hexdigest()
+                    except Exception:
+                        fp = "?"
+                    report["warnings"].append(
+                        f"Logo found by COLOR fallback (not fingerprint): {w}x{h}, "
+                        f"hash {fp}. Add these to DRAWING_CONFIG trane_logo_dims/hashes "
+                        f"to make future runs exact and fast.")
 
     # ---- decide which pages are "Trane submittal" pages ----
     if cfg["scope_to_trane_pages"]:
@@ -233,6 +352,10 @@ def rebrand_pdf(in_path, out_path, logo_path, config=None):
             label = "trademark symbol" if token == TM else f"'{token}'"
             report["warnings"].append(f"{n} residual {label} on Trane pages - review.")
 
+    # ---- optional: stamp the tolerance-notes block ----
+    if add_notes:
+        _stamp_tolerance_notes(doc, notes_template or NOTES_TEMPLATE, report)
+
     doc.save(out_path, garbage=4, deflate=True, clean=True)
     doc.close()
     return report
@@ -243,13 +366,18 @@ def _cli():
     ap.add_argument("input"); ap.add_argument("output", nargs="?")
     ap.add_argument("--logo", default=os.path.join(os.path.dirname(__file__), "kcc_logo.png"))
     ap.add_argument("--drawing", action="store_true", help="use the drawing profile")
+    ap.add_argument("--notes", action="store_true", help="add the tolerance NOTES block")
     a = ap.parse_args()
     out = a.output or re.sub(r"\.pdf$", "_KCC.pdf", a.input, flags=re.I)
-    rep = rebrand_pdf(a.input, out, a.logo, config=(DRAWING_CONFIG if a.drawing else None))
+    rep = rebrand_pdf(a.input, out, a.logo,
+                      config=(DRAWING_CONFIG if a.drawing else None),
+                      add_notes=a.notes)
     print(f"Wrote {out}")
     print(f"  Trane pages: {rep['scope_pages']}")
     print(f"  text runs redrawn: {len(rep['text'])}")
     print(f"  logos swapped:     {len(rep['logos'])} on page(s) {[p for p,_ in rep['logos']]}")
+    if rep["notes"]:
+        print(f"  tolerance notes added on page(s): {rep['notes']}")
     for w in rep["warnings"]:
         print(f"  WARNING: {w}")
 

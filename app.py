@@ -59,6 +59,13 @@ st.caption("Upload a Trane equipment submittal. Every 'Trane' mention and the "
 with st.sidebar:
     st.header("Options")
     doc_type = st.radio("Document type", ["Submittal", "Drawing"])
+    add_notes = False
+    if doc_type == "Drawing":
+        add_notes = st.checkbox(
+            "Add tolerance notes", value=False,
+            help="Stamp the standard tolerance NOTES block (bends, formed dims, "
+                 "bend angles) above the title block on any sheet that does not "
+                 "already have it. Sheets that already show NOTES are skipped.")
     custom_logo = st.file_uploader("Replacement logo (optional)",
                                    type=["png", "jpg", "jpeg"])
     st.markdown("Leave blank to use the built-in KCC logo.")
@@ -91,13 +98,16 @@ if uploaded is not None:
 
         with st.spinner("Rebranding..."):
             cfg = DRAWING_CONFIG if doc_type == "Drawing" else None
-            report = rebrand_pdf(in_path, out_path, logo_path, config=cfg)
+            report = rebrand_pdf(in_path, out_path, logo_path, config=cfg,
+                                 add_notes=add_notes)
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Text replacements", len(report["text"]))
         c2.metric("Logos swapped", len(report["logos"]))
         c3.metric("Warnings", len(report["warnings"]))
 
+        if report.get("notes"):
+            st.success(f"Tolerance notes added on page(s): {report['notes']}")
         for w in report["warnings"]:
             st.warning(w)
 
