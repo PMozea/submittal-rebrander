@@ -115,18 +115,30 @@ def _stamp_tolerance_notes(doc, tmpl_path, report):
             if anc is None:
                 report["warnings"].append(f"p{pno+1}: no DIMENSIONS anchor - tolerance notes not added.")
                 continue
-            ax, ay = anc
+            # Lay the block out in the viewer's (visual) frame, where it is always upright
+            # regardless of page rotation, then map back to raw space for stamping. On a
+            # rotated sheet get_text returns raw coords, so the anchor is mapped to visual
+            # first; on an unrotated sheet both matrices are the identity (behaviour is
+            # unchanged).
+            rot = page.rotation
+            rmat = page.rotation_matrix          # raw -> visual
+            dmat = page.derotation_matrix        # visual -> raw
+            ax, ay = fitz.Point(anc) * rmat
             x0 = ax + _NOTES_OFF_X
             y1 = ay + _NOTES_OFF_Y1
-            page.show_pdf_page(fitz.Rect(x0, y1 - _NOTES_H, x0 + _NOTES_W, y1), tmpl, 0)
+            text_rect = fitz.Rect(x0, y1 - _NOTES_H, x0 + _NOTES_W, y1) * dmat
+            page.show_pdf_page(text_rect, tmpl, 0, rotate=rot)   # rotate template to read upright
             # close the cell: full-width top rule + right vertical (left frame &
             # bottom rule already exist on the sheet)
             top_y = ay + _NOTES_TOP_Y_OFF
             bot_y = ay + _NOTES_BOT_Y_OFF
             lx = ax + _NOTES_LEFT_X_OFF
             rx = ax + _NOTES_RIGHT_X_OFF
-            page.draw_line((lx, top_y), (rx, top_y), color=(0, 0, 0), width=_NOTES_LINE_W)
-            page.draw_line((rx, top_y), (rx, bot_y), color=(0, 0, 0), width=_NOTES_LINE_W)
+            p_tl = fitz.Point(lx, top_y) * dmat
+            p_tr = fitz.Point(rx, top_y) * dmat
+            p_br = fitz.Point(rx, bot_y) * dmat
+            page.draw_line(p_tl, p_tr, color=(0, 0, 0), width=_NOTES_LINE_W)
+            page.draw_line(p_tr, p_br, color=(0, 0, 0), width=_NOTES_LINE_W)
             report["notes"].append(pno + 1)
 
 
