@@ -23,6 +23,7 @@ Usage:
 """
 import argparse
 import hashlib
+import math
 import os
 import re
 
@@ -62,8 +63,9 @@ DRAWING_CONFIG = {
     "scope_to_trane_pages": False,
     "page_markers": [],
     "trane_logo_hashes": {"53d7abf3fbd7230ab0b4c8d9af3c6e9e",   # drawing title-block logo (PNG, 548x211)
-                          "f1739bdab6285b34d894a616dd89b5ab"},  # drawing title-block logo (JPEG, 639x245)
-    "trane_logo_dims": [(548, 211), (639, 245)],
+                          "f1739bdab6285b34d894a616dd89b5ab",  # drawing title-block logo (JPEG, 639x245)
+                          "c44756f5fa59435ed0c4962d6be53848"},  # drawing title-block logo (rotated page, 371x141)
+    "trane_logo_dims": [(548, 211), (639, 245), (371, 141)],
     "color_fallback": True,   # if no fingerprint match, find the logo by its orange signature
 }
 
@@ -222,8 +224,8 @@ def rebrand_pdf(in_path, out_path, logo_path, config=None,
             rects = page.get_image_rects(xref)
             if _image_is_trane(doc, xref, w, h, rects, cfg):
                 logo_pages.add(pno)
-                for r in rects:
-                    logo_jobs.append((pno, xref, r))
+                for r, mat in page.get_image_rects(xref, transform=True):
+                    logo_jobs.append((pno, xref, r, mat))
 
     # ---- fallback: no fingerprint match -> find the logo by its orange signature ----
     # (drawing profile only; runs solely when the exact pass found nothing, so it can
@@ -236,8 +238,8 @@ def rebrand_pdf(in_path, out_path, logo_path, config=None,
                 rects = page.get_image_rects(xref)
                 if _image_is_trane_by_color(doc, xref, w, h, rects, page):
                     logo_pages.add(pno)
-                    for r in rects:
-                        logo_jobs.append((pno, xref, r))
+                    for r, mat in page.get_image_rects(xref, transform=True):
+                        logo_jobs.append((pno, xref, r, mat))
                     try:
                         fp = hashlib.md5(doc.extract_image(xref)["image"]).hexdigest()
                     except Exception:
@@ -346,13 +348,27 @@ def rebrand_pdf(in_path, out_path, logo_path, config=None,
                 kw, kh = limg[0].rect.width, limg[0].rect.height
             ar = kh / kw
             deleted = set()
-            for pno, xref, rect in logo_jobs:
+            for pno, xref, rect, mat in logo_jobs:
                 page = doc[pno]
                 if xref not in deleted:
                     page.delete_image(xref); deleted.add(xref)
-                w = rect.width
-                page.insert_image(fitz.Rect(rect.x0, rect.y0, rect.x0 + w, rect.y0 + w * ar),
-                                  filename=logo_path, keep_proportion=True, overlay=True)
+                # Match the original logo's placement orientation. Some sheets are
+                # authored on a rotated page (e.g. landscape stored as rotated portrait),
+                # so the Trane logo is placed with a 90/180/270 matrix. Insert the KCC
+                # logo at that same rotation, or it comes out sideways.
+                ang = round(math.degrees(math.atan2(mat.b, mat.a)) / 90.0) * 90
+                rot = int(-ang) % 360
+                if (mat.a * mat.d - mat.b * mat.c) < 0:
+                    report["warnings"].append(
+                        f"p{pno+1}: logo placed with a mirror transform - check orientation.")
+                if rot:
+                    # fit KCC into the exact Trane footprint, pre-rotated to read upright
+                    page.insert_image(rect, filename=logo_path, keep_proportion=True,
+                                      overlay=True, rotate=rot)
+                else:
+                    w = rect.width
+                    page.insert_image(fitz.Rect(rect.x0, rect.y0, rect.x0 + w, rect.y0 + w * ar),
+                                      filename=logo_path, keep_proportion=True, overlay=True)
                 report["logos"].append((pno + 1, tuple(round(v, 1) for v in rect)))
     else:
         report["warnings"].append("No Trane logo found by fingerprint - nothing swapped.")
