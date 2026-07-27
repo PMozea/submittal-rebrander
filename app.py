@@ -13,7 +13,7 @@ import tempfile
 import fitz
 import streamlit as st
 
-from rebrand import rebrand_pdf, DRAWING_CONFIG
+from rebrand import rebrand_pdf, convert_models_pdf, DRAWING_CONFIG
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_LOGO = os.path.join(HERE, "kcc_logo.png")
@@ -58,8 +58,13 @@ st.caption("Upload a Trane equipment submittal. Every 'Trane' mention and the "
 
 with st.sidebar:
     st.header("Options")
-    doc_type = st.radio("Document type", ["Submittal", "Drawing"])
+    doc_type = st.radio("Document type",
+                        ["Submittal", "Drawing", "Model numbers only"])
     convert_models = False
+    if doc_type == "Model numbers only":
+        st.caption("Converts every model number to the hybrid nomenclature and "
+                   "changes nothing else. Use this when the submittal is already "
+                   "KCC-branded.")
     if doc_type == "Submittal":
         convert_models = st.checkbox(
             "Convert model numbers to hybrid (BETA)", value=False,
@@ -73,15 +78,17 @@ with st.sidebar:
             help="Stamp the standard tolerance NOTES block (bends, formed dims, "
                  "bend angles) above the title block on any sheet that does not "
                  "already have it. Sheets that already show NOTES are skipped.")
-    custom_logo = st.file_uploader("Replacement logo (optional)",
-                                   type=["png", "jpg", "jpeg"])
-    st.markdown("Leave blank to use the built-in KCC logo.")
+    custom_logo = None
+    if doc_type != "Model numbers only":
+        custom_logo = st.file_uploader("Replacement logo (optional)",
+                                       type=["png", "jpg", "jpeg"])
+        st.markdown("Leave blank to use the built-in KCC logo.")
     st.divider()
     st.markdown("**Always eyeball the downloaded file** before sending it on - "
                 "logo detection and tight model cells are the parts most worth a "
                 "glance.")
 
-uploaded = st.file_uploader("Trane submittal or drawing (PDF)", type=["pdf"])
+uploaded = st.file_uploader("Submittal or drawing (PDF)", type=["pdf"])
 
 
 def _png(path, page=0, zoom=1.4):
@@ -104,14 +111,21 @@ if uploaded is not None:
                 fh.write(custom_logo.getbuffer())
 
         with st.spinner("Rebranding..."):
-            cfg = DRAWING_CONFIG if doc_type == "Drawing" else None
-            report = rebrand_pdf(in_path, out_path, logo_path, config=cfg,
-                                 add_notes=add_notes,
-                                 convert_models=convert_models)
+            if doc_type == "Model numbers only":
+                report = convert_models_pdf(in_path, out_path)
+            else:
+                cfg = DRAWING_CONFIG if doc_type == "Drawing" else None
+                report = rebrand_pdf(in_path, out_path, logo_path, config=cfg,
+                                     add_notes=add_notes,
+                                     convert_models=convert_models)
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Text replacements", len(report["text"]))
-        c2.metric("Logos swapped", len(report["logos"]))
+        if doc_type == "Model numbers only":
+            c1.metric("Model numbers converted", len(report.get("models", [])))
+            c2.metric("Pages changed", len(report.get("scope_pages", [])))
+        else:
+            c1.metric("Text replacements", len(report["text"]))
+            c2.metric("Logos swapped", len(report["logos"]))
         c3.metric("Warnings", len(report["warnings"]))
 
         models = report.get("models", [])
@@ -147,7 +161,10 @@ if uploaded is not None:
         with open(out_path, "rb") as fh:
             data = fh.read()
         out_name = uploaded.name.rsplit(".", 1)[0] + "_KCC.pdf"
-        st.download_button(f"Download KCC {doc_type.lower()}", data=data,
+        label = ("Download converted submittal"
+                 if doc_type == "Model numbers only"
+                 else f"Download KCC {doc_type.lower()}")
+        st.download_button(label, data=data,
                            file_name=out_name, mime="application/pdf",
                            type="primary")
 

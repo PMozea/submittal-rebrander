@@ -413,6 +413,31 @@ def rebrand_pdf(in_path, out_path, logo_path, config=None,
     return report
 
 
+def convert_models_pdf(in_path, out_path):
+    """Model-number conversion on its own - no rebranding, no logo swap.
+
+    For submittals that are already KCC-branded (or were never Trane) and only
+    need their model numbers moved to the hybrid nomenclature. Pages with no
+    model number are left byte-for-byte identical.
+    """
+    report = {"text": [], "logos": [], "warnings": [], "scope_pages": [],
+              "notes": [], "models": []}
+    doc = fitz.open(in_path)
+    try:
+        from modelswap import swap_models
+        swap_models(doc, report)
+    except Exception as exc:                      # noqa: BLE001
+        report["warnings"].append(f"model conversion unavailable: {exc}")
+    if not report["models"]:
+        report["warnings"].append(
+            "No model numbers found - nothing changed. Check this is a submittal "
+            "with a Model Number column.")
+    report["scope_pages"] = sorted({p for p, *_ in report["models"]})
+    doc.save(out_path, garbage=4, deflate=True, clean=True)
+    doc.close()
+    return report
+
+
 def _cli():
     ap = argparse.ArgumentParser(description="Rebrand a Trane submittal or drawing to KCC.")
     ap.add_argument("input"); ap.add_argument("output", nargs="?")
@@ -421,8 +446,19 @@ def _cli():
     ap.add_argument("--notes", action="store_true", help="add the tolerance NOTES block")
     ap.add_argument("--models", action="store_true",
                     help="convert model numbers to the hybrid nomenclature")
+    ap.add_argument("--models-only", action="store_true",
+                    help="convert model numbers and do nothing else")
     a = ap.parse_args()
     out = a.output or re.sub(r"\.pdf$", "_KCC.pdf", a.input, flags=re.I)
+    if a.models_only:
+        rep = convert_models_pdf(a.input, out)
+        print(f"Wrote {out}")
+        for pno, old, new, book, _n in rep.get("models", []):
+            print(f"  p{pno} model: {old}")
+            print(f"          -> {new}  [{book}]")
+        for w in rep["warnings"]:
+            print(f"  WARNING: {w}")
+        return
     rep = rebrand_pdf(a.input, out, a.logo,
                       config=(DRAWING_CONFIG if a.drawing else None),
                       add_notes=a.notes, convert_models=a.models)
