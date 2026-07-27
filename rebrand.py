@@ -220,9 +220,11 @@ def _image_is_trane_by_color(doc, xref, w, h, rects, page):
 
 
 def rebrand_pdf(in_path, out_path, logo_path, config=None,
-                add_notes=False, notes_template=None):
+                add_notes=False, notes_template=None,
+                convert_models=False):
     cfg = {**DEFAULT_CONFIG, **(config or {})}
-    report = {"text": [], "logos": [], "warnings": [], "scope_pages": [], "notes": []}
+    report = {"text": [], "logos": [], "warnings": [], "scope_pages": [],
+              "notes": [], "models": []}
     doc = fitz.open(in_path)
 
     # ---- find the Trane logo(s) by fingerprint ----
@@ -394,6 +396,14 @@ def rebrand_pdf(in_path, out_path, logo_path, config=None,
             label = "trademark symbol" if token == TM else f"'{token}'"
             report["warnings"].append(f"{n} residual {label} on Trane pages - review.")
 
+    # ---- optional: convert model numbers to the hybrid nomenclature ----
+    if convert_models:
+        try:
+            from modelswap import swap_models
+            swap_models(doc, report)
+        except Exception as exc:   # noqa: BLE001
+            report["warnings"].append(f"model conversion unavailable: {exc}")
+
     # ---- optional: stamp the tolerance-notes block ----
     if add_notes:
         _stamp_tolerance_notes(doc, notes_template or NOTES_TEMPLATE, report)
@@ -409,15 +419,20 @@ def _cli():
     ap.add_argument("--logo", default=os.path.join(os.path.dirname(__file__), "kcc_logo.png"))
     ap.add_argument("--drawing", action="store_true", help="use the drawing profile")
     ap.add_argument("--notes", action="store_true", help="add the tolerance NOTES block")
+    ap.add_argument("--models", action="store_true",
+                    help="convert model numbers to the hybrid nomenclature")
     a = ap.parse_args()
     out = a.output or re.sub(r"\.pdf$", "_KCC.pdf", a.input, flags=re.I)
     rep = rebrand_pdf(a.input, out, a.logo,
                       config=(DRAWING_CONFIG if a.drawing else None),
-                      add_notes=a.notes)
+                      add_notes=a.notes, convert_models=a.models)
     print(f"Wrote {out}")
     print(f"  Trane pages: {rep['scope_pages']}")
     print(f"  text runs redrawn: {len(rep['text'])}")
     print(f"  logos swapped:     {len(rep['logos'])} on page(s) {[p for p,_ in rep['logos']]}")
+    for pno, old, new, book, _n in rep.get("models", []):
+        print(f"  p{pno} model: {old}")
+        print(f"          -> {new}  [{book}]")
     if rep["notes"]:
         print(f"  tolerance notes added on page(s): {rep['notes']}")
     for w in rep["warnings"]:

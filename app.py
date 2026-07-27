@@ -59,6 +59,13 @@ st.caption("Upload a Trane equipment submittal. Every 'Trane' mention and the "
 with st.sidebar:
     st.header("Options")
     doc_type = st.radio("Document type", ["Submittal", "Drawing"])
+    convert_models = False
+    if doc_type == "Submittal":
+        convert_models = st.checkbox(
+            "Convert model numbers to hybrid (BETA)", value=False,
+            help="Rewrite each unit's model number in the new 69-position hybrid "
+                 "nomenclature. OABD becomes OABG and OAND becomes OAKG. Always "
+                 "review the audit table below before sending the file on.")
     add_notes = False
     if doc_type == "Drawing":
         add_notes = st.checkbox(
@@ -99,12 +106,38 @@ if uploaded is not None:
         with st.spinner("Rebranding..."):
             cfg = DRAWING_CONFIG if doc_type == "Drawing" else None
             report = rebrand_pdf(in_path, out_path, logo_path, config=cfg,
-                                 add_notes=add_notes)
+                                 add_notes=add_notes,
+                                 convert_models=convert_models)
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Text replacements", len(report["text"]))
         c2.metric("Logos swapped", len(report["logos"]))
         c3.metric("Warnings", len(report["warnings"]))
+
+        models = report.get("models", [])
+        if models:
+            st.subheader(f"Model numbers converted ({len(models)})")
+            st.dataframe(
+                [{"Page": p, "Current": old, "New hybrid": new, "Codebook": bk,
+                  "Flagged": ", ".join(
+                      "d" + ",".join(map(str, d))
+                      for d, _c, lvl, _w in nt if lvl in ("CHECK", "ERROR")) or "-"}
+                 for p, old, new, bk, nt in models],
+                use_container_width=True, hide_index=True)
+            errs = [(p, d, w) for p, _o, _n, _b, nt in models
+                    for d, _c, lvl, w in nt if lvl == "ERROR"]
+            for p, d, w in errs:
+                st.error(f"p{p} d{','.join(map(str, d))}: {w}")
+            with st.expander("Per-digit audit"):
+                for p, old, new, bk, nt in models:
+                    st.markdown(f"**p{p}** `{old}` -> `{new}`  ({bk})")
+                    st.dataframe(
+                        [{"Digit": "d" + ",".join(map(str, d)), "Code": c,
+                          "Flag": lvl, "Derived from": str(w)[:70]}
+                         for d, c, lvl, w in nt],
+                        use_container_width=True, hide_index=True)
+            st.info("BETA - model conversion is new. Check the numbers above, "
+                    "especially anything flagged, before releasing the submittal.")
 
         if report.get("notes"):
             st.success(f"Tolerance notes added on page(s): {report['notes']}")
