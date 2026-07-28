@@ -60,9 +60,9 @@ with st.sidebar:
     st.header("Options")
     doc_type = st.radio("Document type",
                         ["Submittal", "Drawing", "Model numbers only",
-                         "Hybrid to Rev5 lookup"])
+                         "Hybrid 69 to Rev5 lookup"])
     convert_models = False
-    if doc_type == "Hybrid to Rev5 lookup":
+    if doc_type == "Hybrid 69 to Rev5 lookup":
         st.caption("Paste a hybrid model number to get its rev5 equivalent, the "
                    "pre-approved ETOs, and any flags. OABG and OAKG only - OADG "
                    "and OANG were never rev5 models.")
@@ -84,7 +84,7 @@ with st.sidebar:
                  "bend angles) above the title block on any sheet that does not "
                  "already have it. Sheets that already show NOTES are skipped.")
     custom_logo = None
-    if doc_type not in ("Model numbers only", "Hybrid to Rev5 lookup"):
+    if doc_type not in ("Model numbers only", "Hybrid 69 to Rev5 lookup"):
         custom_logo = st.file_uploader("Replacement logo (optional)",
                                        type=["png", "jpg", "jpeg"])
         st.markdown("Leave blank to use the built-in KCC logo.")
@@ -93,16 +93,23 @@ with st.sidebar:
                 "logo detection and tight model cells are the parts most worth a "
                 "glance.")
 
-if doc_type == "Hybrid to Rev5 lookup":
+if doc_type == "Hybrid 69 to Rev5 lookup":
     from reverse import reverse as _reverse
 
-    st.subheader("Hybrid to Rev5 lookup")
+    st.subheader("Hybrid 69 to Rev5 lookup")
     txt = st.text_area(
         "Hybrid model number(s) - one per line",
         height=110,
         placeholder="OAKG040E3-DAB1GB900-S1BGL1AJ3-24A11J03CGF1C03000-AA1000000-00AM00000")
-    if txt.strip():
-        for raw in [ln.strip() for ln in txt.splitlines() if ln.strip()]:
+    c1, c2 = st.columns([1, 6])
+    if c1.button("Convert", type="primary"):
+        st.session_state["rev5_input"] = txt
+    if c2.button("Clear"):
+        st.session_state.pop("rev5_input", None)
+
+    pending = st.session_state.get("rev5_input", "")
+    if pending.strip():
+        for raw in [ln.strip() for ln in pending.splitlines() if ln.strip()]:
             try:
                 res = _reverse(raw)
             except Exception as exc:                      # noqa: BLE001
