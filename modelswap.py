@@ -130,11 +130,12 @@ def swap_models(doc, report, pages=None):
         hits = _find(page)
         if not hits:
             continue
+        page_text = page.get_text()
         redactions = []
         draws = []
         for model, group in hits:
             try:
-                new, notes, book = convert_model(model)
+                new, notes, book = convert_model(model, page_text)
             except Exception as exc:                    # noqa: BLE001
                 report["warnings"].append(f"p{pno+1}: could not convert {model}: {exc}")
                 continue

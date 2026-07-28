@@ -15,8 +15,8 @@ Notes carry a level:
 # OABD -> OABG and OAND -> OAKG are confirmed. The other rev5 cabinets follow the
 # same one-step shift down the B/D/K/N ladder and are marked for confirmation.
 CABINET = {
-    "OAB5": {"B": ("B", "ok"), "G": ("D", "CHECK")},
-    "OAN5": {"N": ("K", "ok"), "K": ("D", "CHECK"), "D": ("B", "CHECK")},
+    "OAB5": {"B": ("B", "ok"), "G": (None, "discontinued")},
+    "OAN5": {"D": ("D", "ok"), "K": ("K", "ok"), "N": ("K", "ok")},
 }
 
 # --------------------------------------------------------------- simple maps
@@ -62,18 +62,23 @@ COMPRESSOR = {
     "M": (("F", "A"), "ok"),
 }
 
-# rev5 d14 -> (hybrid d14 outdoor coil, hybrid d44 condenser fan option)
-CONDENSER = {
-    "0": (("0", "0"), "ok"),
-    "1": (("1", "A"), "ok"),
-    "2": (("1", "B"), "ok"),     # head pressure on/off -> Passive HPC
-    "3": (("4", "0"), "ok"),     # WC Copper/Steel
-    "4": (("1", "C"), "ok"),     # head pressure variable speed -> Active HPC
-    "5": (("2", "A"), "ok"),
-    "6": (("2", "B"), "ok"),
-    "7": (("2", "C"), "ok"),
-    "8": (("3", "0"), "ok"),     # WC Copper/Nickel
-}
+# Condenser. rev5 packs the coil type and the head-pressure control into one
+# digit; rev6 splits them into d14 (coil) and d44 (condenser fans). Whether the
+# coil is a heat pump comes from rev5 digit 4, not digit 14.
+#   rev5 d14 -> (rev6 air-cooled coil, rev6 d44 fan option, discontinued?)
+COND_AIR = {"1": ("1", "A", True),    # plain air cooled - retired in rev6
+            "2": ("1", "B", True),    # on/off head pressure - retired
+            "4": ("1", "C", False),   # variable speed head pressure - current
+            "5": ("2", "A", True),    # micro channel - discontinued
+            "6": ("2", "B", True),
+            "7": ("2", "C", True)}
+# Every water-cooled unit KCC builds is a WSHP - there is no DX water-cooled-only
+# product - so rev6 codes 3 and 4 (plain Water Cooled) are never produced.
+COND_WATER = {"3": "8",               # Cu/Steel  -> WSHP Copper/Steel
+              "8": "7"}               # Cu/Nickel -> WSHP Copper/Nickel
+# air-cooled coil -> its ASHP equivalent, when digit 4 says heat pump
+ASHP = {"1": "5", "2": "6"}
+HEATPUMP_D4 = {"E", "F"}              # E = heat pump, F = indoor WSHP
 
 REFRIGERANT = {  # rev5 d15 -> hybrid d15
     "0": ("0", "ok"), "A": ("1", "ok"), "B": ("2", "ok"), "C": ("3", "ok"),
@@ -173,7 +178,36 @@ ERV_TYPE = {
     "OAB5": {"0": ("0", "ok"), "A": ("1", "ok"), "B": ("2", "ok"),
              "C": ("3", "ok"), "D": ("4", "ok")},
 }
-ERV_X_FALLBACK = ("1", "purge artifact: type from text, purge set on d35")
+# rev5 d31 = "X" is a selection-tool artifact: with no purge digit available the
+# tool wrote X into the TYPE digit. X therefore says "purge was selected" but says
+# nothing about construction - that has to come from the ERV description printed
+# on the same page. Guessing a type here would silently mis-spec the wheel.
+def erv_from_text(text):
+    """ERV description -> hybrid d34. Returns (code, why) or (None, why)."""
+    t = (text or "").lower()
+    if "erv/hrv" in t:
+        t = t.split("erv/hrv", 1)[1][:160]
+    elif "energy recovery:" in t:
+        t = t.split("energy recovery:", 1)[1][:160]
+    else:
+        return None, "no ERV description found"
+    if "polymer" in t or "composite" in t:
+        mat, m = "composite", "1"
+    elif "aluminum" in t or "aluminium" in t:
+        mat, m = "aluminum", "3"
+    elif "3a" in t:
+        return ("5" if "bypass" in t else "6"), "ERV-3A from text"
+    elif "fixed plate" in t:
+        return "7", "fixed plate from text"
+    elif "enthalpy core" in t:
+        return "8", "enthalpy core from text"
+    else:
+        return None, "ERV construction not recognised in the description"
+    if "bypass" in t:
+        return m, f"{mat} with bypass, from the ERV description"
+    if "frost" in t and "vfd" in t:
+        return str(int(m) + 1), f"{mat} with frost protection w/VFD, from the ERV description"
+    return m, f"{mat} (mode unclear), from the ERV description"
 
 # rev5 ERV wheel label -> hybrid d36 (first two digits are the diameter)
 ERV_DIA_TO_CODE = {30: "A", 36: "B", 41: "C", 46: "D", 52: "E", 58: "F",

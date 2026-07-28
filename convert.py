@@ -97,8 +97,13 @@ def convert_rev5(model, text=""):
 
     # --- identity block
     put((1, 2), "OA")
-    cab, n = M.CABINET[book].get(g(3), ("B", "CHECK"))
-    put((3,), cab, n, f"rev5 cabinet {g(3)}")
+    cab, n = M.CABINET[book].get(g(3), (None, "CHECK"))
+    if cab is None:
+        put((3,), g(3), "ERROR",
+            f"rev5 cabinet {g(3)} is discontinued - no rev6 equivalent")
+        cab = g(3)
+    else:
+        put((3,), cab, n, f"rev5 cabinet {g(3)}")
     put((4,), "G", "ok", "rev D -> rev 6")
 
     cap3 = gm(5, 6, 7)
@@ -119,8 +124,39 @@ def convert_rev5(model, text=""):
     c, n = M.REHEAT.get(g(12), ("0", "CHECK")); put((12,), c, n, desc(book, (12,), g(12)))
     (c13, c45), n = M.COMPRESSOR.get(g(13), (("0", "0"), "CHECK"))
     put((13,), c13, n, desc(book, (13,), g(13)))
-    (c14, c44), n = M.CONDENSER.get(g(14), (("0", "0"), "CHECK"))
-    put((14,), c14, n, desc(book, (14,), g(14)))
+    # Condenser coil, condenser fans and installation location all follow from
+    # rev5 digit 4 (heat pump / indoor WSHP) together with digit 14.
+    hp = g(4) in M.HEATPUMP_D4
+    indoor = g(4) == "F"
+    cd = g(14)
+    cwhy = desc(book, (14,), cd) or f"d14={cd}"
+    if cd == "0":
+        c14, c44, n = "0", "0", "ok"
+    elif cd in M.COND_WATER:
+        c14, c44 = M.COND_WATER[cd], "0"
+        n = "ok" if hp else "CHECK"
+        cwhy += " -> WSHP (every water-cooled unit is a heat pump)"
+        if not hp:
+            cwhy += f"; rev5 d4={g(4)} does not indicate a heat pump"
+    elif cd in M.COND_AIR:
+        base, c44, gone = M.COND_AIR[cd]
+        n = "ok"
+        if indoor:
+            c14, n = base, "ERROR"
+            cwhy += " - d4=F is indoor WSHP but this coil is air cooled"
+        elif hp:
+            c14 = M.ASHP.get(base, base)
+            cwhy += " -> ASHP (d4=E)"
+        else:
+            c14 = base
+        if gone:
+            n = "CHECK" if n == "ok" else n
+            cwhy += " - retired in rev6"
+    else:
+        c14, c44, n = "0", "0", "ERROR"
+        cwhy = f"unrecognised rev5 condenser code {cd!r}"
+    put((14,), c14, n, cwhy)
+    c51 = "B" if indoor else "A"
     c, n = M.REFRIGERANT.get(g(15), ("0", "CHECK")); put((15,), c, n, desc(book, (15,), g(15)))
 
     # --- heat: rev5 d20 (type pri/sec) + d21 (fuel) -> hybrid d16/d18
@@ -135,14 +171,50 @@ def convert_rev5(model, text=""):
     d18 = M.DF_BY_FUEL.get(fuel, "1") if sec == "DF" else sec
     put((18,), d18, "ok", "secondary heat type")
 
-    # heat capacities (3-column tables: IF | ELECTRIC | HOT WATER)
-    col = M.KIND_TO_HEATCOL.get(kind, 0)
-    cap = desc(book, (22,), g(22), col)
-    h17 = hyb_lookup((17,), cap)
-    put((17,), h17 or "0", "ok" if h17 else "CHECK", cap)
-    scap = desc(book, (23,), g(23), 0)
-    h19 = hyb_lookup((19,), scap) if g(23) != "0" else "0"
-    put((19,), h19 or "0", "ok" if h19 else "CHECK", scap)
+    # Heat capacities. Which column applies depends on the heat type, and the two
+    # rev5 books do NOT use the same column order (OAB d23 is ELEC|DF, OAN d23 is
+    # IF|ELEC|DF), so columns are resolved by their label, never by position.
+    KINDCOL = {"IF": "IF", "ESTG": "ELEC", "ESCR": "ELEC", "HW": "HW"}
+    lbl = KINDCOL.get(kind)
+    if kind == "NONE" or g(22) == "0":
+        put((17,), "0", "ok", "no primary heat")
+    elif lbl is None:
+        put((17,), "X", "ERROR", f"primary heat type {kind} has no capacity column")
+    else:
+        ci = CB.heat_column(BOOKS[book], (22,), lbl)
+        if ci is None:
+            put((17,), "X", "ERROR", f"{book} d22 has no {lbl} column")
+        else:
+            cap = desc(book, (22,), g(22), ci)
+            h17 = hyb_lookup((17,), cap, CB.heat_column(BOOKS["HYB"], (17,), lbl))
+            put((17,), h17 or "X", "ok" if h17 else "ERROR",
+                f"{cap}  [{lbl} column]")
+
+    # Secondary. Hybrid d19 is ELECTRIC only, and direct fired is discontinued.
+    SECCOL = {"DF": "DF", "3": "HW", "4": "ELEC", "5": "ELEC"}
+    if sec == "0" or g(23) == "0":
+        put((19,), "0", "ok", "no secondary heat")
+    else:
+        slbl = SECCOL.get(sec)
+        hsi = CB.heat_column(BOOKS["HYB"], (19,), slbl) if slbl else None
+        si = CB.heat_column(BOOKS[book], (23,), slbl) if slbl else None
+        scap = desc(book, (23,), g(23), si) if si is not None else None
+        if slbl == "DF":
+            put((19,), "X", "ERROR",
+                f"secondary is direct fired ({scap}) - discontinued, and hybrid "
+                "d19 is electric only")
+        elif slbl is None:
+            put((19,), "X", "ERROR", f"secondary heat type {sec} has no capacity column")
+        elif si is None:
+            put((19,), "X", "ERROR", f"{book} d23 has no {slbl} column")
+        elif hsi is None:
+            put((19,), "X", "ERROR",
+                f"{scap} - hybrid d19 is electric only, no {slbl} column")
+        else:
+            h19 = hyb_lookup((19,), scap, hsi)
+            put((19,), h19 or "X", "ok" if h19 else "ERROR",
+                f"{scap}  [{slbl} column]" +
+                ("" if h19 else " - no hybrid equivalent"))
 
     # --- supply fan: rev5 d16 (type) + d18 (HP) + d17 (wheel)
     mt = desc(book, (16,), g(16))
@@ -152,8 +224,11 @@ def convert_rev5(model, text=""):
         hp = OAB5_HP[fam].get(g(18))
     else:
         hp = desc(book, (18,), g(18))
-    h21 = hyb_lookup((21,), hp)
-    put((21,), h21 or "X", "ok" if h21 else "CHECK", hp)
+    if g(18) == "0":
+        put((21,), "0", "ok", "no supply fan motor")
+    else:
+        h21 = hyb_lookup((21,), hp)
+        put((21,), h21 or "X", "ok" if h21 else "CHECK", hp)
     put((22,), c22, n22, mt)
     wl = desc(book, (17,), g(17))
     wc, wn = M.wheel_code(wl)
@@ -224,8 +299,15 @@ def convert_rev5(model, text=""):
     # --- ERV: type + the purge artifact
     e = g(31)
     if e == "X":
-        d34, n34 = M.ERV_X_FALLBACK[0], "CHECK"
-        why, purge = M.ERV_X_FALLBACK[1], "1"
+        purge = "1"
+        d34, why = M.erv_from_text(text)
+        if d34:
+            n34 = "CHECK"
+            why = f"rev5 'X' purge artifact - {why}"
+        else:
+            d34, n34 = "X", "ERROR"
+            why = ("rev5 'X' says purge was selected but not the ERV type; "
+                   f"{why}. Set d34 by hand.")
     else:
         d34, n34 = M.ERV_TYPE[book].get(e, ("0", "CHECK"))
         why, purge = desc(book, (31,), e), "0"
@@ -265,7 +347,7 @@ def convert_rev5(model, text=""):
     c, n = M.CORROSIVE.get(g(24), ("0", "CHECK"))
     put((42,), c, n, desc(book, (24,), g(24)))
     put((43,), c43, "ok", "outdoor air monitoring")
-    put((44,), c44, "ok", desc(book, (14,), g(14)))
+    put((44,), c44, "ok", "condenser fans, from rev5 d14")
     put((45,), "A" if "sound blanket" in low else c45, "ok", "compressor sound package")
     put((46,), M.SMOKE.get(g(35), "0"), "ok", desc(book, (35,), g(35)))
 
@@ -279,7 +361,8 @@ def convert_rev5(model, text=""):
     put((49,), uv, "ok", "UV lights")
 
     # --- unit-level options
-    put((51,), "B" if "installation: indoor" in low else "A", "ok", "install location")
+    put((51,), c51, "ok",
+        f"rev5 d4={g(4)} ({desc(book,(4,),g(4))})")
     put((52,), d52, "ok", "convenience outlet")
     put((53,), "1" if ("w/ display" in cl or "w/display" in cl) else "0", "ok", "controls display")
     put((54,), "A" if "reliatel" in low else "0",

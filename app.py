@@ -59,8 +59,13 @@ st.caption("Upload a Trane equipment submittal. Every 'Trane' mention and the "
 with st.sidebar:
     st.header("Options")
     doc_type = st.radio("Document type",
-                        ["Submittal", "Drawing", "Model numbers only"])
+                        ["Submittal", "Drawing", "Model numbers only",
+                         "Hybrid to Rev5 lookup"])
     convert_models = False
+    if doc_type == "Hybrid to Rev5 lookup":
+        st.caption("Paste a hybrid model number to get its rev5 equivalent, the "
+                   "pre-approved ETOs, and any flags. OABG and OAKG only - OADG "
+                   "and OANG were never rev5 models.")
     if doc_type == "Model numbers only":
         st.caption("Converts every model number to the hybrid nomenclature and "
                    "changes nothing else. Use this when the submittal is already "
@@ -79,7 +84,7 @@ with st.sidebar:
                  "bend angles) above the title block on any sheet that does not "
                  "already have it. Sheets that already show NOTES are skipped.")
     custom_logo = None
-    if doc_type != "Model numbers only":
+    if doc_type not in ("Model numbers only", "Hybrid to Rev5 lookup"):
         custom_logo = st.file_uploader("Replacement logo (optional)",
                                        type=["png", "jpg", "jpeg"])
         st.markdown("Leave blank to use the built-in KCC logo.")
@@ -87,6 +92,43 @@ with st.sidebar:
     st.markdown("**Always eyeball the downloaded file** before sending it on - "
                 "logo detection and tight model cells are the parts most worth a "
                 "glance.")
+
+if doc_type == "Hybrid to Rev5 lookup":
+    from reverse import reverse as _reverse
+
+    st.subheader("Hybrid to Rev5 lookup")
+    txt = st.text_area(
+        "Hybrid model number(s) - one per line",
+        height=110,
+        placeholder="OAKG040E3-DAB1GB900-S1BGL1AJ3-24A11J03CGF1C03000-AA1000000-00AM00000")
+    if txt.strip():
+        for raw in [ln.strip() for ln in txt.splitlines() if ln.strip()]:
+            try:
+                res = _reverse(raw)
+            except Exception as exc:                      # noqa: BLE001
+                st.error(f"{raw}: {exc}")
+                continue
+            st.markdown("---")
+            st.caption(raw)
+            if res["model"]:
+                st.markdown(f"### `{res['model']}`")
+            if res["etos"]:
+                st.markdown("**Pre-approved ETOs required** - these are not "
+                            "carried in the rev5 model number and must be added "
+                            "to the order:")
+                for nm, src in res["etos"]:
+                    st.markdown(f"- **{nm}**  \n  <small>{src}</small>",
+                                unsafe_allow_html=True)
+            if res["logic"]:
+                with st.expander("Logic that changed"):
+                    for l in res["logic"]:
+                        st.markdown(f"- {l}")
+            for f in res["flags"]:
+                st.warning(f)
+            if res["model"] and not res["etos"] and not res["flags"]:
+                st.success("Clean conversion - no ETOs, no flags.")
+    st.stop()
+
 
 uploaded = st.file_uploader("Submittal or drawing (PDF)", type=["pdf"])
 

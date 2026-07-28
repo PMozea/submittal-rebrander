@@ -35,7 +35,7 @@ def _grid(path, sheet):
     return g, ws.max_row, ws.max_column
 
 
-def _load_sheet(path, sheet, ncols=4):
+def _load_sheet(path, sheet, ncols=10):
     g, maxr, maxc = _grid(path, sheet)
     heads = []
     for (r, c), v in g.items():
@@ -46,11 +46,24 @@ def _load_sheet(path, sheet, ncols=4):
     bycol = {}
     for h in heads:
         bycol.setdefault(h[1], []).append(h)
+    head_cols = sorted({h[1] for h in heads})
     out = {}
     for col, hs in bycol.items():
         hs.sort(key=lambda h: h[0])
         for i, (r, c, digs, title) in enumerate(hs):
             stop = hs[i + 1][0] if i + 1 < len(hs) else maxr + 1
+            # a wide window would run into the block on the right, so clip to it
+            right = next((x for x in head_cols if x > c), None)
+            span = min(ncols, (right - c - 1)) if right else ncols
+            # Column labels (IF / ELEC / HW / DF) sit on the row under the
+            # header. The books do not agree on their order - OAB d23 is
+            # ELEC|DF while OAN d23 is IF|ELEC - so capacity blocks are
+            # addressed by label, never by index.
+            headers = []
+            for k in range(1, span + 1):
+                v = g.get((r + 1, c + k))
+                if v and len(v) > 1 and not _HEAD.match(v):
+                    headers.append(v)
             codes = {}
             prev = None
             for rr in range(r + 1, stop):
@@ -67,13 +80,13 @@ def _load_sheet(path, sheet, ncols=4):
                     if nxt >= len(SEQ):
                         continue
                     code = SEQ[nxt]
-                    if not any(g.get((rr, c + k)) for k in range(1, ncols + 1)):
+                    if not any(g.get((rr, c + k)) for k in range(1, span + 1)):
                         continue
                 # The OAN sheet interleaves single-letter cabinet applicability
                 # flags (A/K/N) between the code and its description, so gather
                 # every non-trivial cell to the right and drop the 1-char flags.
                 clean = []
-                for k in range(1, ncols + 1):
+                for k in range(1, span + 1):
                     v = g.get((rr, c + k))
                     if v is None:
                         continue
@@ -87,7 +100,7 @@ def _load_sheet(path, sheet, ncols=4):
                 codes.setdefault(code, clean)
                 prev = code
             if digs not in out or len(codes) > len(out[digs][1]):
-                out[digs] = (title, codes)
+                out[digs] = (title, codes, headers)
     return out
 
 
@@ -104,10 +117,31 @@ def load_books(cur_path=None, hyb_path=None):
 UNUSED = {"REV5": {10, 19}, "REV6": {10, 20, 30, 40, 50, 60}}
 
 
+HEAT_COL_ALIASES = {
+    "IF":   ("if", "indirect"),
+    "ELEC": ("elec",),
+    "HW":   ("hw", "hot water"),
+    "DF":   ("df", "direct fired"),
+}
+
+
+def heat_column(book_blocks, digs, kind):
+    """Index of the capacity column for a heat kind, by label. None if absent."""
+    blk = book_blocks.get(digs)
+    if not blk or len(blk) < 3:
+        return None
+    pats = HEAT_COL_ALIASES.get(kind, ())
+    for i, h in enumerate(blk[2]):
+        hl = h.strip().lower()
+        if any(hl.startswith(p) or hl == p for p in pats):
+            return i
+    return None
+
+
 def positions(book, rev):
     """Ordered list of (digit-tuple, title) actually present in the string."""
     fields = sorted(book.items(), key=lambda kv: kv[0][0])
-    return [(d, t) for d, (t, _) in fields if d[0] not in UNUSED[rev]]
+    return [(d, blk[0]) for d, blk in fields if d[0] not in UNUSED[rev]]
 
 
 def split_model(model, book, rev):
