@@ -18,7 +18,9 @@ from rebrand import rebrand_pdf, convert_models_pdf, DRAWING_CONFIG
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_LOGO = os.path.join(HERE, "kcc_logo.png")
 
-st.set_page_config(page_title="Submittal Rebrander", layout="wide")
+APP_NAME = "P&D ENGINEERING TOOL"
+
+st.set_page_config(page_title=APP_NAME, layout="wide")
 
 
 # ----------------------------------------------------------- optional password
@@ -35,7 +37,7 @@ def _password_ok():
         return True
     if st.session_state.get("authed"):
         return True
-    st.title("Submittal Rebrander")
+    st.title(APP_NAME)
     entered = st.text_input("Enter password to continue", type="password")
     if entered:
         if entered == pw:
@@ -51,10 +53,19 @@ if not _password_ok():
 
 
 # ----------------------------------------------------------------- main app
-st.title("Submittal Rebrander  -  Trane to KCC")
-st.caption("Upload a Trane equipment submittal. Every 'Trane' mention and the "
-           "header logo are replaced with KCC, and the result is returned for "
-           "download. Files are processed in memory and are not stored on the server.")
+st.title(APP_NAME)
+
+MODE_BLURB = {
+    "Submittal": "Rebrand a Trane equipment submittal to KCC. Every 'Trane' "
+                 "mention and the header logo are replaced, and model numbers "
+                 "can optionally be converted to the hybrid nomenclature.",
+    "Drawing": "Rebrand a Trane mechanical drawing to KCC, and optionally stamp "
+               "the standard tolerance notes above the title block.",
+    "Model numbers only": "Convert every model number in a PDF to the hybrid "
+                          "nomenclature and change nothing else.",
+    "Hybrid 69 to Rev5 lookup": "Look up the rev5 equivalent of a hybrid model "
+                                "number, with the pre-approved ETOs it needs.",
+}
 
 with st.sidebar:
     st.header("Options")
@@ -96,6 +107,7 @@ with st.sidebar:
 if doc_type == "Hybrid 69 to Rev5 lookup":
     from reverse import reverse as _reverse
 
+    st.caption(MODE_BLURB["Hybrid 69 to Rev5 lookup"])
     st.subheader("Hybrid 69 to Rev5 lookup")
     txt = st.text_area(
         "Hybrid model number(s) - one per line",
@@ -136,6 +148,10 @@ if doc_type == "Hybrid 69 to Rev5 lookup":
                 st.success("Clean conversion - no ETOs, no flags.")
     st.stop()
 
+
+st.caption(MODE_BLURB.get(doc_type, "") +
+           ("  Files are processed in memory and are not stored on the server."
+            if doc_type != "Hybrid 69 to Rev5 lookup" else ""))
 
 uploaded = st.file_uploader("Submittal or drawing (PDF)", type=["pdf"])
 
