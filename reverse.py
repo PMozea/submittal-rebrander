@@ -349,6 +349,8 @@ def reverse(model):
     for digs, _t in CB.positions(BOOKS[book], "REV5"):
         parts.append(D.get(digs, "0" * len(digs)))
     s5 = "".join(parts)
-    out["model"] = f"{s5[:9]}-{s5[9:17]}-{s5[17:]}" if book == "OAN5" else f"{s5[:9]}-{s5[9:]}"
+    # hyphens stand in for the unused rev5 positions d10 and d19, giving the
+    # full 39 characters
+    out["model"] = f"{s5[:9]}-{s5[9:17]}-{s5[17:]}"
     out["book"] = book
     return out

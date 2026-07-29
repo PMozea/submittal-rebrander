@@ -21,8 +21,10 @@ import mapping as M
 
 BOOKS = CB.load_books()
 
-# hybrid printed layout: 6 groups of 9/9/9/18/9/9
-GROUPS = [9, 9, 9, 18, 9, 9]
+# Hybrid printed layout. The six NOT USED positions (10, 20, 30, 40, 50, 60) are
+# printed as hyphens, so the string is 7 groups of 9 digits plus 6 hyphens = 69
+# characters - which is where "69 digit model number" comes from.
+GROUPS = [9, 9, 9, 9, 9, 9, 9]
 
 # OAB rev5 motor-HP table is three columns (ECM | Belt | Direct Drive) and the
 # sheet leaves the unused ones blank, so it is transcribed explicitly.

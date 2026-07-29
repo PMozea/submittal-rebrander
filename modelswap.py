@@ -24,16 +24,29 @@ LEAD = 1.025                  # line pitch as a multiple of the type size
 
 
 def _wrap(s, font, size, width):
-    """Trane's rule: fill to the cell width, break with a hyphen, continue."""
-    lines, cur = [], ""
-    for ch in s:
-        if cur and font.text_length(cur + ch + "-", size) > width:
-            lines.append(cur + "-")
-            cur = ch
+    """Fill to the cell width, break with a hyphen, continue - the way Trane's
+    own submittals already print a long number.
+
+    The model number already contains hyphens (they stand in for the unused
+    digit positions), so a break that lands on one must not add a second."""
+    lines, rest = [], s
+    while rest:
+        if font.text_length(rest, size) <= width:
+            lines.append(rest)
+            break
+        # widest prefix that fits, leaving room for a hyphen if we have to add one
+        cut = len(rest)
+        while cut > 1 and font.text_length(rest[:cut] + "-", size) > width:
+            cut -= 1
+        # prefer to break on a hyphen the number already carries, the way the
+        # native rev6 pages do (they break at the digit-40 hyphen)
+        nat = rest.rfind("-", 1, cut + 1)
+        if nat >= cut * 0.5:
+            lines.append(rest[:nat + 1])
+            rest = rest[nat + 1:]
         else:
-            cur += ch
-    if cur:
-        lines.append(cur)
+            lines.append(rest[:cut] + "-")
+            rest = rest[cut:]
     return lines
 
 
@@ -70,7 +83,8 @@ def _find(page):
                 break
             j, c = nxt
             used.add(j)
-            parts[-1] = parts[-1][:-1]          # drop the soft hyphen
+            # the trailing "-" is a real hyphen standing in for an unused digit
+            # (e.g. d40), not a soft wrap hyphen, so it is kept
             parts.append(c["text"].strip())
             group.append(c)
         model = "".join(parts)
