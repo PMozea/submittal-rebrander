@@ -50,6 +50,23 @@ def desc(book, digs, code, col=0):
     return vals[col] if col < len(vals) else vals[0]
 
 
+def desc_miss(book, digs, code):
+    """Plain-language reason a description lookup came back empty.
+
+    Attached to a flag instead of an empty string, so a code the book does not
+    carry explains itself. This is how the OAB5 '0' vs '00' key mismatch hid for
+    so long: desc() returned None, every keyword test downstream failed, and the
+    digit fell through to a default that happened to be a legal hybrid code."""
+    label = "d" + ",".join(map(str, digs))
+    blk = BOOKS[book].get(digs)
+    if not blk:
+        return f"the {book} sheet has no {label} block - check the workbook"
+    known = ", ".join(repr(k) for k in sorted(blk[1])[:6])
+    return (f"code {code!r} is not in the {book} {label} block ({blk[0]}) - "
+            f"that book has {known}... - check the workbook, most likely a code "
+            f"cell holding a number instead of text")
+
+
 def hyb_lookup(digs, text, col=None):
     """Find the hybrid code whose description matches `text` (exact, then prefix)."""
     if text is None:
@@ -261,7 +278,8 @@ def convert_rev5(model, text=""):
     (c29, c43), n = M.AIRFLOW_MON.get(g(37), (("0", "0"), "CHECK"))
     put((29,), c29, n, desc(book, (37,), g(37)))
 
-    ctl = desc(book, (25, 26), gm(25, 26)) or ""
+    ctl_code = gm(25, 26)
+    ctl = desc(book, (25, 26), ctl_code) or ""
     cl = ctl.lower()
     if "lab space" in cl:            d31 = "5"
     elif "lab discharge" in cl:      d31 = "6"
@@ -273,7 +291,18 @@ def convert_rev5(model, text=""):
     elif "single-zone vav" in cl:    d31 = "4"
     elif "non ddc" in cl:            d31 = "0"
     else:                            d31 = "X"
-    put((31,), d31, "ok" if d31 != "X" else "CHECK", ctl)
+    # X is a legal hybrid code (Special Controls), so a silent fallback here
+    # ships a plausible but wrong number. Distinguish the two ways of getting
+    # there: an unmatched description is a judgement call, a missing code is a
+    # data fault in the workbook.
+    if d31 != "X":
+        put((31,), d31, "ok", ctl)
+    elif ctl:
+        put((31,), d31, "CHECK",
+            f"{ctl} - no hybrid controls code matches this description; "
+            f"d31 left as X (Special Controls)")
+    else:
+        put((31,), d31, "ERROR", desc_miss(book, (25, 26), ctl_code))
     if "bacnet" in cl:
         put((32,), "4", "ok", "BACnet -> BACnet & MODBUS")
     elif "lon" in cl:

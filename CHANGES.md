@@ -1,7 +1,8 @@
 # CHANGES — this update
 
-Two files changed: **`app.py`** and **`modelswap.py`**. Everything else in the repo
-is byte-identical to what is deployed, including `cur.xlsx` and `hyb.xlsx`.
+Four files changed: **`app.py`**, **`modelswap.py`**, **`convert.py`** and
+**`cur.xlsx`**. `hyb.xlsx` and everything else is byte-identical to what is
+deployed.
 
 `kcc_logo.png` and `tolerance_notes.pdf` are **not in this zip** — they were not in
 the bundle I was working from. Leave the copies already in the repo alone.
@@ -98,16 +99,42 @@ Cause: the ETO edits patch characters by white-boxing and retyping them.
 
 ---
 
+## 3. `cur.xlsx` + `convert.py` — the OAB d31 fault
+
+`'OAB rev 5'!E85` held the integer `0` as the UNIT CONTROLS code. The field is
+two positions wide and `OAN rev5` keys the same option `00`, so `desc()` missed
+on OAB → `ctl` was the empty string → no keyword test could fire → `d31` fell
+through to `X`. Because `X` is a **legal** hybrid code (Special Controls), every
+Non-DDC OAB unit shipped a plausible but wrong number, flagged only by a CHECK
+with no message in it.
+
+- **`cur.xlsx`**: `E85` is now the text `"00"`, formatted `@` so Excel cannot eat
+  the leading zero again. Verified surgical — re-parsing all four codebooks
+  before and after shows exactly one key changed and nothing else moved.
+- **`convert.py`**: new `desc_miss()` returns a plain-language reason a lookup
+  came back empty, naming the code, the book, the block and the codes that book
+  does carry. The d31 site now separates the two ways of reaching `X`:
+  a description that is present but unmatched stays a **CHECK** (a judgement
+  call), while a code missing from the book is an **ERROR** (a workbook fault).
+  No more blank flags.
+
+Mt Horeb p17 now converts to `OABG006C3-DAB8G0000-C1ADC1AD3-00B20A010-...`
+with only the known d54 CHECK. All six Lido conversions are unchanged.
+
+---
+
 ## Open items, deliberately not changed
 
-1. **`cur.xlsx`, OAB rev 5, UNIT CONTROLS (d25–d26):** "Non DDC -
-   Electromechanical" is keyed `0`, but `OAN rev5` keys the same option `00`.
-   The converter reads d25+d26 as two characters, so it resolves in OAN5 and
-   misses in OAB5 → `desc()` returns None → the `"non ddc"` test cannot fire →
-   `d31 = "X"` with an empty message. **Every Non-DDC OAB unit gets an invalid
-   `X` at d31.** One-cell fix, no code change (the workbooks load at runtime).
-   A guard so a missing code says which code and book was missed — rather than
-   nothing — would stop the next mismatch hiding the same way.
+1. **`cur.xlsx`, OAB rev 5, the capacity block (`A16:A22`).** Same class of
+   fault as the controls cell: `DIGIT 5, 6, 7 - NORMAL GROSS COOLING CAPACITY
+   (MBh)` stores its codes as numbers, so the sub-100 sizes lose their leading
+   zero — `0, 36, 48, 60, 72, 84, 96` where `OAN rev5` and the hybrid both pad
+   to `000, 036, 048, 060, 072, 084, 096`. The `108`+ rows are fine because
+   `str(108)` is already three characters. **Inert today**: both directions do
+   arithmetic on those digits rather than a description lookup
+   (`convert.py` `tons = round(mbh/12)`, `reverse.py` `tons*12`). It becomes a
+   live fault for every 3–8 ton OAB the moment anything reads the description.
+   Seven cells, text-formatted, would close it.
 2. **`use_container_width`** is deprecated; Streamlit's warning says it was
    slated for removal after 2025-12-31. Two `st.dataframe` and two `st.image`
    calls. The replacement, `width='stretch'`, needs a higher floor than the
