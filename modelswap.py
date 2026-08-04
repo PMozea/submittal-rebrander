@@ -6,6 +6,15 @@ Long numbers are wrapped the way Trane's own submittal software already does it:
 fill the cell, break with a hyphen, continue on the next line. The type size is
 stepped down until the wrapped block clears whatever sits below it, so nothing
 else on the page has to move.
+
+Hand-edited submittals (ETO revisions) need extra care on three counts, all of
+them handled below:
+  - characters are patched by white-boxing and retyping, so one model number can
+    arrive as a dozen separate spans on a single line (see _runs)
+  - those patch boxes are white-filled and white-stroked, and must not be read as
+    table geometry (see _visible)
+  - a large ETO stamp often sits under the table, and the row has to be able to
+    push it down along with the tag line (see _has_room)
 """
 import re
 
@@ -22,6 +31,10 @@ MODEL_RE = re.compile(r"OA[BDGKN][A-G]\d{3}[A-Z0-9]{2}(?:-[A-Z0-9]+)+")
 
 VALID_LEN = {37, 63}          # printed chars, hyphens excluded (rev5 / rev6)
 
+# A near miss worth reporting: long enough to be a mangled model number rather
+# than an unrelated code that happens to fit the pattern.
+NEAR_MISS = range(20, 71)
+
 # Trane sets a wrapped model number in 9pt on a 10pt pitch and grows the table
 # row to suit: a single-line row closes at y=103.45, a two-line row at y=109.46.
 # We match that. If the row cannot be grown safely we fall back to shrinking the
@@ -30,6 +43,20 @@ BASE_SIZE = 9.0
 MIN_SIZE = 6.5
 LEAD = 1.112                  # 10.01pt pitch at 9pt, as Trane uses
 RULE_GAP = 3.62               # gap from the last baseline to the closing rule
+
+# Baseline jitter between retyped character patches on one line, measured at
+# 0.32pt on the Mt Horeb ETO submittal. Well under the 10pt line pitch.
+BASELINE_TOL = 1.5
+
+# The row is already tall enough if its rule clears the last baseline by this
+# much. Native two-line rev6 rows sit 3.04pt below the last baseline, slightly
+# tighter than RULE_GAP, and must not be nudged for the sake of half a point.
+GROW_SLACK = 1.0
+
+# Ink bottom of a span, as a fraction of type size below the baseline. A span
+# bbox is generous - a 24pt stamp reports 33pt of height - which made the old
+# room test refuse moves that were geometrically fine.
+DESCENDER = 0.15
 
 
 def _wrap(s, font, size, width):
@@ -65,10 +92,142 @@ def _wrap(s, font, size, width):
     return lines
 
 
+# --------------------------------------------------------------------------
+# finding the number
+# --------------------------------------------------------------------------
+
+def _page_spans(page):
+    return [s for blk in page.get_text("dict")["blocks"]
+            for line in blk.get("lines", [])
+            for s in line["spans"] if s["text"].strip()]
+
+
+def _runs(page, spans=None):
+    """Spans grouped into visual lines, then into runs of horizontally touching
+    spans, each run joined back into one string.
+
+    Matching span by span misses any number the editor has broken up, so the
+    line is rebuilt first. Lines are clustered on the baseline, anchored on the
+    first span so a slowly drifting sequence cannot chain itself together."""
+    spans = _page_spans(page) if spans is None else spans
+    lines = []
+    for s in sorted(spans, key=lambda s: (s["origin"][1], s["bbox"][0])):
+        for ln in lines:
+            if abs(s["origin"][1] - ln["y"]) <= BASELINE_TOL:
+                ln["spans"].append(s)
+                break
+        else:
+            lines.append({"y": s["origin"][1], "spans": [s]})
+
+    runs = []
+    for ln in lines:
+        ln["spans"].sort(key=lambda s: s["bbox"][0])
+        cur = []
+        for s in ln["spans"]:
+            if cur and s["bbox"][0] - cur[-1]["bbox"][2] > max(1.5, 0.35 * s["size"]):
+                runs.append(cur)
+                cur = []
+            cur.append(s)
+        if cur:
+            runs.append(cur)
+
+    out = []
+    for r in runs:
+        out.append({"text": "".join(s["text"] for s in r), "spans": r,
+                    "x0": r[0]["bbox"][0],
+                    "top": min(s["bbox"][1] for s in r),
+                    "base": r[0]["origin"][1]})
+    return out
+
+
+def _covering(run, a, b):
+    """The spans of `run` that carry characters [a, b) of its joined text."""
+    out, off = [], 0
+    for s in run["spans"]:
+        end = off + len(s["text"])
+        if off < b and end > a:
+            out.append(s)
+        off = end
+    return out
+
+
+def _find(page, spans=None):
+    """Model-number occurrences, rebuilt from however many spans carry them.
+
+    Returns (found, rejects): `found` is a list of (model, spans); `rejects`
+    holds anything that looked like a model number but did not validate, so the
+    caller can warn instead of dropping it silently."""
+    runs = _runs(page, spans)
+    found, rejects, used = [], [], set()
+    for i, run in enumerate(runs):
+        if i in used:
+            continue
+        m = MODEL_RE.search(run["text"])
+        if not m:
+            continue
+        used.add(i)
+        # MODEL_RE cannot match a trailing hyphen (its last group needs a
+        # character after the "-"), but a line that ends on one is a wrapped
+        # number carrying a real hyphen at an unused digit. Keep it, or the
+        # continuation below is never looked for.
+        end = m.end()
+        if run["text"][end:end + 1] == "-":
+            end += 1
+        parts = [run["text"][m.start():end]]
+        group = list(_covering(run, m.start(), end))
+        last_top = run["top"]
+        # a continuation sits just below, left-aligned, when the line ends "-"
+        while parts[-1].endswith("-"):
+            nxt = None
+            for j, c in enumerate(runs):
+                if j in used:
+                    continue
+                if (abs(c["x0"] - run["x0"]) < 1.5
+                        and 0 < c["top"] - last_top < 14):
+                    nxt = j
+                    break
+            if nxt is None:
+                break
+            used.add(nxt)
+            cont = runs[nxt]
+            # the trailing "-" is a real hyphen standing in for an unused digit
+            # (e.g. d40), not a soft wrap hyphen, so it is kept
+            parts.append(cont["text"].strip())
+            group.extend(cont["spans"])
+            last_top = cont["top"]
+        model = "".join(parts)
+        printed = len(model.replace("-", ""))
+        if printed in VALID_LEN:
+            found.append((model, group))
+        elif printed in NEAR_MISS:
+            rejects.append((model, printed))
+    return found, rejects
+
+
+# --------------------------------------------------------------------------
+# page geometry
+# --------------------------------------------------------------------------
+
+def _white(v):
+    return v is None or all(c > 0.98 for c in v)
+
+
+def _visible(dr):
+    """False for a drawing that cannot appear on paper - no visible stroke and no
+    visible fill.
+
+    The ETO edits patch characters with white-filled, white-stroked boxes. Those
+    are not table borders, and reading them as such put the cell's right edge at
+    515.0 instead of 526.6 and the row rule at 98.5 instead of 103.45."""
+    return not (_white(dr.get("color")) and _white(dr.get("fill")))
+
+
 def _rules(page, y_lo, y_hi):
     """Horizontal segments (grouped by y) and vertical segments in a band."""
     horiz, vert = {}, {}
     for dr in page.get_drawings():
+        if not _visible(dr):
+            continue
         w = dr.get("width") or 0.5
         col = dr.get("color")
         for it in dr["items"]:
@@ -92,17 +251,23 @@ def _rules(page, y_lo, y_hi):
     return horiz, vert
 
 
-def _grow_row(page, x0, model_top, needed_bottom):
-    """Push the row's closing rule down so a taller model number fits, the way
-    Trane's own pages do. Returns (delta, undo_rect, draws) or None."""
-    horiz, vert = _rules(page, model_top + 2, model_top + 80)
-    rule_y = None
+def _row_rule(page, x0, model_top):
+    """y of the rule that closes the model number's table row."""
+    horiz, _vert = _rules(page, model_top + 2, model_top + 80)
     for y in sorted(horiz):
         if any(a <= x0 + 2 and b >= x0 + 40 for a, b, _w, _c in horiz[y]):
-            rule_y = y
-            break
-    if rule_y is None or needed_bottom <= rule_y + 0.2:
+            return y
+    return None
+
+
+def _grow_row(page, x0, model_top, needed_bottom, rule_y):
+    """Push the row's closing rule down so a taller model number fits, the way
+    Trane's own pages do. Returns (delta, rule_y, x_lo, x_hi, segs, cols) or None."""
+    if rule_y is None or needed_bottom <= rule_y + GROW_SLACK:
         return None                                   # already tall enough
+    horiz, vert = _rules(page, model_top + 2, model_top + 80)
+    if rule_y not in horiz:
+        return None
     delta = round(needed_bottom - rule_y, 2)
     segs = horiz[rule_y]
     x_lo = min(a for a, _b, _w, _c in segs)
@@ -111,49 +276,6 @@ def _grow_row(page, x0, model_top, needed_bottom):
     cols = [(x, v[0][2], v[0][3]) for x, v in vert.items()
             if any(abs(b - rule_y) < 0.6 for _a, b, _w, _c in v)]
     return delta, rule_y, x_lo, x_hi, segs, cols
-
-
-def _find(page):
-    """Model-number occurrences, re-joining any that the PDF wrapped across lines."""
-    spans = []
-    for blk in page.get_text("dict")["blocks"]:
-        for line in blk.get("lines", []):
-            for s in line["spans"]:
-                if s["text"].strip():
-                    spans.append(s)
-    spans.sort(key=lambda s: (round(s["bbox"][1], 1), s["bbox"][0]))
-
-    found, used = [], set()
-    for i, s in enumerate(spans):
-        if i in used:
-            continue
-        t = s["text"].strip()
-        if not MODEL_RE.match(t):
-            continue
-        parts, group = [t], [s]
-        used.add(i)
-        # a continuation sits just below, left-aligned, when the line ends "-"
-        while parts[-1].endswith("-"):
-            nxt = None
-            for j, c in enumerate(spans):
-                if j in used:
-                    continue
-                if (abs(c["bbox"][0] - s["bbox"][0]) < 1.5
-                        and 0 < c["bbox"][1] - group[-1]["bbox"][1] < 14):
-                    nxt = (j, c)
-                    break
-            if not nxt:
-                break
-            j, c = nxt
-            used.add(j)
-            # the trailing "-" is a real hyphen standing in for an unused digit
-            # (e.g. d40), not a soft wrap hyphen, so it is kept
-            parts.append(c["text"].strip())
-            group.append(c)
-        model = "".join(parts)
-        if len(model.replace("-", "")) in VALID_LEN:
-            found.append((model, group))
-    return found
 
 
 def _cell_right(page, x0, y0, y1, fallback):
@@ -165,6 +287,8 @@ def _cell_right(page, x0, y0, y1, fallback):
     """
     best = None
     for dr in page.get_drawings():
+        if not _visible(dr):
+            continue
         for it in dr["items"]:
             xs = []
             if it[0] == "l":
@@ -181,37 +305,63 @@ def _cell_right(page, x0, y0, y1, fallback):
     return (best - 2.0) if best else fallback
 
 
-def _clearance(page, group, x0, x1):
-    """Lowest y a rewritten block may reach before touching the text below it."""
+def _ink_bottom(sp):
+    return sp["origin"][1] + DESCENDER * sp["size"]
+
+
+def _clearance(page, group, x0, x1, spans=None, skip=()):
+    """Lowest y a rewritten block may reach before touching the text below it.
+
+    `skip` holds spans that are going to be moved out of the way, so they must
+    not also be counted as the obstruction."""
     bottom = max(g["bbox"][3] for g in group)
     limit = page.rect.height
-    for blk in page.get_text("dict")["blocks"]:
-        for line in blk.get("lines", []):
-            for s in line["spans"]:
-                if not s["text"].strip() or s in group:
-                    continue
-                b = s["bbox"]
-                if b[1] >= bottom - 1 and b[2] > x0 and b[0] < x1 + 40:
-                    limit = min(limit, b[1])
+    for s in (_page_spans(page) if spans is None else spans):
+        if s in group or s in skip:
+            continue
+        b = s["bbox"]
+        if b[1] >= bottom - 1 and b[2] > x0 and b[0] < x1 + 40:
+            limit = min(limit, b[1])
     return limit
 
 
-def _block_below(page, rule_y, reach=30.0):
-    """Spans sitting just under the row rule (the Tag line), and the first thing
-    below them, so we can tell whether the block has room to move down."""
+def _block_below(page, rule_y, reach=30.0, spans=None):
+    """Spans sitting just under the row rule (the Tag line, and any ETO stamp),
+    and the first thing below them."""
     block, after = [], []
-    for blk in page.get_text("dict")["blocks"]:
-        for line in blk.get("lines", []):
-            for sp in line["spans"]:
-                if not sp["text"].strip():
-                    continue
-                y0 = sp["bbox"][1]
-                if rule_y < y0 < rule_y + reach:
-                    block.append(sp)
-                elif y0 >= rule_y + reach:
-                    after.append(y0)
+    for sp in (_page_spans(page) if spans is None else spans):
+        y0 = sp["bbox"][1]
+        if rule_y < y0 < rule_y + reach:
+            block.append(sp)
+        elif y0 >= rule_y + reach:
+            after.append(y0)
     return block, (min(after) if after else 1e9)
 
+
+def _has_room(block, group, delta, spans, gap=0.5):
+    """Can every span in `block` move down by `delta` without running into
+    something that is staying put?
+
+    Compared column by column: a stamp in the middle of the page does not
+    collide with a label on the left margin, and the old whole-page minimum
+    refused every move on an ETO-stamped sheet. Returns (ok, margin)."""
+    margin = 1e9
+    for sp in block:
+        bot = _ink_bottom(sp)
+        x0, x1 = sp["bbox"][0], sp["bbox"][2]
+        for o in spans:
+            if o in block or o in group:
+                continue
+            ob = o["bbox"]
+            if ob[2] <= x0 or ob[0] >= x1:      # different column
+                continue
+            if ob[1] < bot - 0.1:               # not below
+                continue
+            margin = min(margin, ob[1] - (bot + delta))
+    return margin > gap, margin
+
+
+# --------------------------------------------------------------------------
 
 def swap_models(doc, report, pages=None):
     """Convert every model number in `doc`. Returns a list of (page, old, new)."""
@@ -221,7 +371,12 @@ def swap_models(doc, report, pages=None):
         if pages is not None and pno not in pages:
             continue
         page = doc[pno]
-        hits = _find(page)
+        spans = _page_spans(page)
+        hits, rejects = _find(page, spans)
+        for text, printed in rejects:
+            report["warnings"].append(
+                f"p{pno+1}: {text} looks like a model number but has {printed} "
+                f"printed digits, not 37 or 63 - not converted")
         if not hits:
             continue
         page_text = page.get_text()
@@ -232,6 +387,15 @@ def swap_models(doc, report, pages=None):
             except Exception as exc:                    # noqa: BLE001
                 report["warnings"].append(f"p{pno+1}: could not convert {model}: {exc}")
                 continue
+
+            if new == model:
+                # rev6 numbers often carry no retired codes. Report it, leave the
+                # page alone - redrawing identical text can only lose fidelity.
+                report.setdefault("models", []).append(
+                    (pno + 1, model, new, book, notes))
+                done.append((pno + 1, model, new))
+                continue
+
             first = group[0]
             x0 = first["bbox"][0]
             x1 = max(g["bbox"][2] for g in group)
@@ -240,40 +404,54 @@ def swap_models(doc, report, pages=None):
             right = _cell_right(page, x0, top, bot0, fallback=max(x1, x0 + 214.0))
             width = max(right - x0, 120.0)
             base = first["origin"][1]
-            limit = _clearance(page, group, x0, x1)
 
             # Preferred: 9pt on Trane's 10pt pitch, growing the table row if the
             # number needs a second line - exactly what their own pages do.
             lines = _wrap(new, font, BASE_SIZE, width)
             pitch = BASE_SIZE * LEAD
             need = base + (len(lines) - 1) * pitch + RULE_GAP
-            plan = _grow_row(page, x0, top, need) if len(lines) > 1 else None
-            if plan:
-                delta, rule_y = plan[0], plan[1]
-                block, nxt = _block_below(page, rule_y)
-                room = min(nxt, limit if limit < 1e8 else 1e9)
-                low = max((sp["bbox"][3] for sp in block), default=rule_y)
-                if low + delta >= room - 1.0:
-                    plan = None                          # nowhere to push it
-                else:
-                    growths.append((plan, block, delta))
+            rule_y = _row_rule(page, x0, top)
 
-            if plan or len(lines) == 1 or \
-               base + (len(lines) - 1) * pitch + BASE_SIZE * 0.3 < limit - 0.5:
+            plan = None
+            if len(lines) > 1:
+                plan = _grow_row(page, x0, top, need, rule_y)
+            if plan:
+                delta = plan[0]
+                block, _nxt = _block_below(page, plan[1], spans=spans)
+                ok, room = _has_room(block, group, delta, spans)
+                if ok:
+                    growths.append((plan, block, delta))
+                    if room < 2.0:
+                        report["warnings"].append(
+                            f"p{pno+1}: row grown {delta:.1f}pt for {new} with only "
+                            f"{room:.1f}pt to spare - eyeball this page")
+                else:
+                    plan = None                          # nowhere to push it
+
+            if plan:
                 size, start = BASE_SIZE, base
             else:
-                size = BASE_SIZE                        # shrink to the existing row
-                while size >= MIN_SIZE:
-                    size -= 0.5
-                    lines = _wrap(new, font, size, width)
-                    start = max(base - (len(lines) - 1) * size * LEAD * 0.35,
-                                top + size * 0.85)
-                    if start + (len(lines) - 1) * size * LEAD + size * 0.30 < limit - 0.5:
-                        break
+                limit = _clearance(page, group, x0, x1, spans=spans)
+                # the row's closing rule is as hard a limit as the text below it;
+                # drawing across it is what made the Mt Horeb page look wrong
+                fit = min(limit, rule_y) if rule_y is not None else limit
+                if len(lines) == 1 or \
+                        base + (len(lines) - 1) * pitch + BASE_SIZE * 0.3 < fit - 0.5:
+                    size, start = BASE_SIZE, base
                 else:
-                    lines, size, start = _wrap(new, font, MIN_SIZE, width), MIN_SIZE, base
-                    report["warnings"].append(
-                        f"p{pno+1}: tight fit for {new} - eyeball this page")
+                    size = BASE_SIZE                    # shrink to the existing row
+                    while size >= MIN_SIZE:
+                        size -= 0.5
+                        lines = _wrap(new, font, size, width)
+                        start = max(base - (len(lines) - 1) * size * LEAD * 0.35,
+                                    top + size * 0.85)
+                        if start + (len(lines) - 1) * size * LEAD + size * 0.30 < fit - 0.5:
+                            break
+                    else:
+                        lines, size, start = _wrap(new, font, MIN_SIZE, width), MIN_SIZE, base
+                        report["warnings"].append(
+                            f"p{pno+1}: cannot fit {new} in the row and the row "
+                            f"cannot be grown - eyeball this page")
 
             for g in group:
                 b = g["bbox"]
