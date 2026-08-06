@@ -20,6 +20,12 @@ AHRI prints the same 37 rev5 digits as Trane, only chunked 9-9-10-9 instead of
 d19 hyphen slots. Any hyphenation is accepted on input; only the slot count is
 enforced.
 
+AHRI prints only the digits material to the rating - d1-d7, d11-d15, d34 and d36 -
+and asterisks everything else whether or not the model number determines it, then
+stops at d46. That is AHRI policy rather than anything derivable from the
+nomenclature, so it lives in MASK. The full 63-digit conversion is returned
+alongside, since it is what the tool actually worked out.
+
 Correlated digits are split rather than flattened. One rev5 choice can move
 several hybrid digits at once - a condenser bracket spanning air-cooled and
 water-cooled moves the outdoor coil, the condenser fan option and the coil fluid
@@ -38,6 +44,13 @@ BOOK_FOR = {"OAB": "OAB5", "OAN": "OAN5"}
 SLOTS = 37                       # printed rev5 digits
 HYB_HYPHENS = {10, 20, 30, 40, 50, 60}
 SAMPLES = 250                    # random full assignments, to catch joint effects
+
+# AHRI prints only the digits material to the rating and asterisks the rest,
+# whether or not the model number determines them. That is a policy, not
+# something derivable from the nomenclature, so it is listed here. Taken from
+# five published 69-digit AHRI numbers, which agree exactly.
+MASK = {1, 2, 3, 4, 5, 6, 7, 11, 12, 13, 14, 15, 34, 36}
+LAST_DIGIT = 46                  # AHRI stops here: groups of 9-9-9-9-6
 MAX_RESULTS = 24                 # refuse to explode on a heavily bracketed pattern
 SEED = 20260804                  # fixed, so the same pattern always gives the same answer
 
@@ -196,6 +209,8 @@ def _render(slots, book, base, rng):
     correlated, seen = [], {}
     for o, opts in alts:
         moved = _alt_influence(slots, base, o, opts, ref)
+        # a bracket that only moves digits AHRI asterisks needs no splitting
+        moved = {i: v for i, v in moved.items() if (i + 1) in MASK}
         if len(moved) > 1:
             correlated.append((o, opts, moved))
 
@@ -211,17 +226,33 @@ def _render(slots, book, base, rng):
             if ch not in seen[i]:
                 seen[i].append(ch)
 
-    out = []
+    tok = {}
     for i in range(len(ref)):
         if (i + 1) in HYB_HYPHENS:
-            out.append("-")
-        elif i in unknown:
-            out.append("*")
+            continue
+        if i in unknown:
+            tok[i + 1] = "*"
         elif len(seen.get(i, [])) == 1:
-            out.append(seen[i][0])
+            tok[i + 1] = seen[i][0]
         else:
-            out.append("[" + ",".join(seen[i]) + "]")
-    return "".join(out), correlated, notes, blind
+            tok[i + 1] = "[" + ",".join(seen[i]) + "]"
+    return tok, correlated, notes, blind
+
+
+def render_full(tok):
+    """All 63 hybrid digits, 7 groups of 9 - what the conversion actually knows."""
+    return "".join("-" if n in HYB_HYPHENS else tok[n] for n in range(1, 70))
+
+
+def render_ahri(tok):
+    """AHRI's own form: only the rated digits, the rest asterisked, stopping at
+    LAST_DIGIT."""
+    segs = []
+    for g in range(5):
+        wide = 9 if 10 * g + 9 <= LAST_DIGIT else LAST_DIGIT - 10 * g
+        segs.append("".join(tok[10 * g + 1 + j] if (10 * g + 1 + j) in MASK else "*"
+                            for j in range(wide)))
+    return "-".join(segs)
 
 
 def _pattern_text(slots):
@@ -249,12 +280,13 @@ def convert_ahri(pattern, _depth=0, _book=None, _rng=None):
                         "already in hybrid form; this tab converts rev5 only")
 
     base = _baseline(slots, book)
-    hybrid, correlated, notes, blind = _render(slots, book, base, rng)
+    tok, correlated, notes, blind = _render(slots, book, base, rng)
 
     if not correlated or _depth >= 4:
         info = {"book": book, "blind": blind, "notes": notes,
                 "unsplit": [(digit_no(o), opts) for o, opts, _m in correlated]}
-        return [{"rev5": _pattern_text(slots), "hybrid": hybrid, "pins": {}}], info
+        return [{"rev5": _pattern_text(slots), "ahri": render_ahri(tok),
+                 "hybrid": render_full(tok), "pins": {}}], info
 
     # split on the correlated brackets, keeping the separable ones as brackets
     results, info = [], None

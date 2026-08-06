@@ -131,8 +131,21 @@ digits as Trane, chunked **9-9-10-9** instead of 9-8-20, so an ordinal maps onto
 a rev5 digit number by stepping over the d10 and d19 hyphen slots. Any
 hyphenation is accepted on input; only the slot count is enforced.
 
-    in   OABE108**-D1B[3,8]G****-**********-[C,D]1*******
-    out  OABG009**-DAB[8,7]G****-*********-***[3,4]0A0**-***00****-A**00**00-1*A*00000
+    in    OABE108**-D1B[3,8]G****-**********-[A,B]1*******
+    AHRI  OABG009**-DAB[8,7]G****-*********-***[1,2]*A***-******
+    full  OABG009**-DAB[8,7]G****-*********-***[1,2]0A0**-***00****-A**00**00-1*A*00000
+
+**AHRI prints only the rated digits** - d1-d7, d11-d15, d34, d36 - and asterisks
+everything else whether or not the model number determines it, then stops at d46
+(groups of 9-9-9-9-6). That is AHRI policy rather than anything derivable from
+the nomenclature, so it lives in `MASK`, derived from five published 69-digit
+numbers that agree exactly. The full 63-digit conversion is shown underneath,
+since it is what the tool actually worked out.
+
+The mask also decides splitting: a bracket that only moves digits AHRI asterisks
+needs no split, because no reader can mis-combine digits that are not printed. In
+practice this means splitting is rare - the condenser bracket that forced a split
+before now emits one number, since of d14/d44/d61 only d14 is printed.
 
 **No AHRI mapping table**, deliberately - that would be a second thing to keep in
 step with the workbooks. The pattern is expanded into concrete rev5 numbers, each

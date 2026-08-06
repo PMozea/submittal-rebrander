@@ -260,11 +260,13 @@ def _render_ahri(raw):
             f"{len(results)} numbers below.")
 
     for r in results:
-        st.markdown(f"### `{r['hybrid']}`")
+        st.markdown(f"### `{r['ahri']}`")
         if r["pins"]:
             st.caption("with " + ", ".join(f"rev5 d{k} = {v}"
                                            for k, v in sorted(r["pins"].items())))
-    st.caption(f"codebook: {info['book']}")
+        st.caption(f"full 69-digit conversion: `{r['hybrid']}`")
+    st.caption(f"codebook: {info['book']}  -  AHRI prints only the rated digits "
+               f"(d1-d7, d11-d15, d34, d36) and asterisks the rest")
 
     if info.get("blind"):
         st.warning("could not test rev5 digit(s) "
