@@ -128,6 +128,14 @@ with st.sidebar:
 # helpers shared by both directions
 # --------------------------------------------------------------------------
 
+def _lit(s):
+    """Show a model number without Markdown eating its asterisks.
+
+    Streamlit renders messages as Markdown, so a pattern like "D1B[3,8]G****"
+    loses characters to emphasis pairing unless they are escaped."""
+    return s.replace("\\", "\\\\").replace("*", "\\*").replace("_", "\\_")
+
+
 def _printed(model):
     """Digit count with the hyphens removed. The hyphens stand in for unused
     positions, so a valid number is 37 (rev5) or 63 (rev6 / hybrid) digits."""
@@ -246,7 +254,7 @@ def _render_ahri(raw):
     try:
         results, info = ahri.convert_ahri(raw)
     except ahri.AhriError as exc:
-        st.error(str(exc))
+        st.error(_lit(str(exc)))
         return
     except Exception as exc:                          # noqa: BLE001
         st.error(f"{raw}: {exc}")
@@ -297,7 +305,7 @@ if doc_type == "AHRI model numbers":
     for line in [l.strip() for l in
                  st.session_state.get("ahri_input", "").splitlines() if l.strip()]:
         st.markdown("---")
-        st.caption(line)
+        st.caption(f"`{line}`")
         _render_ahri(line)
     st.stop()
 
@@ -321,7 +329,7 @@ if doc_type == "Model numbers only":
     pending = st.session_state.get("mn_input", "")
     for line in [ln.strip() for ln in pending.splitlines() if ln.strip()]:
         st.markdown("---")
-        st.caption(line)
+        st.caption(f"`{line}`")
         if direction == DIR_FWD:
             _render_forward(line)
         else:

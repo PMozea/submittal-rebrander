@@ -42,6 +42,7 @@ import convert
 BOOK_FOR = {"OAB": "OAB5", "OAN": "OAN5"}
 
 SLOTS = 37                       # printed rev5 digits
+AHRI_GROUPS = (9, 9, 10, 9)      # how AHRI chunks them, for error messages
 HYB_HYPHENS = {10, 20, 30, 40, 50, 60}
 SAMPLES = 250                    # random full assignments, to catch joint effects
 
@@ -69,9 +70,21 @@ def parse(pattern):
     toks = [t for seg in pattern.strip().split("-")
             for t in re.findall(r"\[[^\]]*\]|\S", seg)]
     if len(toks) != SLOTS:
+        counts = [len(re.findall(r"\[[^\]]*\]|\S", seg))
+                  for seg in pattern.strip().split("-")]
+        detail = ""
+        if len(counts) == len(AHRI_GROUPS):
+            off = [(i + 1, c, w) for i, (c, w) in enumerate(zip(counts, AHRI_GROUPS))
+                   if c != w]
+            if off:
+                detail = " " + "; ".join(
+                    f"group {i} has {c}, expected {w} "
+                    f"({abs(w - c)} {'short' if c < w else 'too many'})"
+                    for i, c, w in off) + "."
         raise AhriError(
-            f"{len(toks)} digit slots, expected {SLOTS}. A bracket counts as one "
-            f"slot, so OABE108**-D1B[3,8]G****-**********-[C,D]1******* is 37.")
+            f"{len(toks)} digit slots, expected {SLOTS}.{detail} Groups should be "
+            f"{'-'.join(str(g) for g in AHRI_GROUPS)}, and a bracket counts as one "
+            f"slot.")
     out = []
     for o, t in enumerate(toks, 1):
         if t == "*":
