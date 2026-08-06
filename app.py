@@ -72,12 +72,17 @@ MODE_BLURB = {
                           "read them out. No PDF involved. To convert the model "
                           "numbers inside a submittal, use the Submittal mode and "
                           "tick the model-number box.",
+    "AHRI model numbers": "Convert an AHRI certification model number from rev5 "
+                          "to hybrid. These are patterns, not single units: a "
+                          "\"*\" is a digit AHRI does not rate, and \"[3,8]\" is a "
+                          "digit certified either way. OAB and OAN cabinets.",
 }
 
 with st.sidebar:
     st.header("Options")
     doc_type = st.radio("Document type",
-                        ["Submittal", "Drawing", "Model numbers only"])
+                        ["Submittal", "Drawing", "Model numbers only",
+                         "AHRI model numbers"])
 
     direction = DIR_FWD
     convert_models = False
@@ -108,7 +113,7 @@ with st.sidebar:
                  "already have it. Sheets that already show NOTES are skipped.")
 
     custom_logo = None
-    if doc_type != "Model numbers only":
+    if doc_type in ("Submittal", "Drawing"):
         custom_logo = st.file_uploader("Replacement logo (optional)",
                                        type=["png", "jpg", "jpeg"])
         st.markdown("Leave blank to use the built-in KCC logo.")
@@ -233,6 +238,66 @@ def _render_reverse(raw):
         st.warning(f)
     if res["model"] and not res["etos"] and not res["flags"]:
         st.success("Clean conversion - no ETOs, no flags.")
+
+
+def _render_ahri(raw):
+    import ahri
+
+    try:
+        results, info = ahri.convert_ahri(raw)
+    except ahri.AhriError as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:                          # noqa: BLE001
+        st.error(f"{raw}: {exc}")
+        return
+
+    for d, opts, moved in info.get("split_on", []):
+        st.warning(
+            f"rev5 d{d} {opts} moves hybrid "
+            f"{', '.join('d' + str(m) for m in moved)} together, so those digits "
+            f"cannot be written as independent brackets - split into "
+            f"{len(results)} numbers below.")
+
+    for r in results:
+        st.markdown(f"### `{r['hybrid']}`")
+        if r["pins"]:
+            st.caption("with " + ", ".join(f"rev5 d{k} = {v}"
+                                           for k, v in sorted(r["pins"].items())))
+    st.caption(f"codebook: {info['book']}")
+
+    if info.get("blind"):
+        st.warning("could not test rev5 digit(s) "
+                   + ", ".join("d" + str(d) for d in info["blind"])
+                   + " - the sheet carries no codes for them, so any hybrid digit "
+                     "they feed may be shown as fixed when it should be *")
+
+    for digs, _code, lvl, why in (info.get("notes") or []):
+        if lvl in ("CHECK", "ERROR"):
+            d = "d" + ",".join(map(str, digs))
+            (st.error if lvl == "ERROR" else st.warning)(
+                f"{d}: {why or '(no message)'}")
+    st.caption("Only flags that hold for every value of every wildcard are shown - "
+               "anything raised by a placeholder digit is filtered out.")
+
+
+if doc_type == "AHRI model numbers":
+    st.caption(MODE_BLURB["AHRI model numbers"])
+    st.subheader("AHRI rev5 to hybrid")
+    txt = st.text_area("AHRI model number(s) - one per line", height=110,
+                       placeholder="OABE108**-D1B[3,8]G****-**********-[C,D]1*******")
+    c1, c2 = st.columns([1, 6])
+    if c1.button("Convert", type="primary"):
+        st.session_state["ahri_input"] = txt
+    if c2.button("Clear"):
+        st.session_state.pop("ahri_input", None)
+
+    for line in [l.strip() for l in
+                 st.session_state.get("ahri_input", "").splitlines() if l.strip()]:
+        st.markdown("---")
+        st.caption(line)
+        _render_ahri(line)
+    st.stop()
 
 
 if doc_type == "Model numbers only":

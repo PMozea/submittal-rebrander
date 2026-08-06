@@ -1,8 +1,8 @@
 # CHANGES — this update
 
-Four files changed: **`app.py`**, **`modelswap.py`**, **`convert.py`** and
-**`cur.xlsx`**. `hyb.xlsx` and everything else is byte-identical to what is
-deployed.
+Four files changed - **`app.py`**, **`modelswap.py`**, **`convert.py`**,
+**`cur.xlsx`** - and one is new: **`ahri.py`**. `hyb.xlsx` and everything else is
+byte-identical to what is deployed.
 
 `kcc_logo.png` and `tolerance_notes.pdf` are **not in this zip** — they were not in
 the bundle I was working from. Leave the copies already in the repo alone.
@@ -120,6 +120,54 @@ with no message in it.
 
 Mt Horeb p17 now converts to `OABG006C3-DAB8G0000-C1ADC1AD3-00B20A010-...`
 with only the known d54 CHECK. All six Lido conversions are unchanged.
+
+---
+
+## 4. `ahri.py` + a fourth mode - AHRI model numbers
+
+An AHRI certification number is a pattern, not a unit: `*` is a digit AHRI does
+not rate, `[3,8]` is a digit certified either way. AHRI prints the same 37 rev5
+digits as Trane, chunked **9-9-10-9** instead of 9-8-20, so an ordinal maps onto
+a rev5 digit number by stepping over the d10 and d19 hyphen slots. Any
+hyphenation is accepted on input; only the slot count is enforced.
+
+    in   OABE108**-D1B[3,8]G****-**********-[C,D]1*******
+    out  OABG009**-DAB[8,7]G****-*********-***[3,4]0A0**-***00****-A**00**00-1*A*00000
+
+**No AHRI mapping table**, deliberately - that would be a second thing to keep in
+step with the workbooks. The pattern is expanded into concrete rev5 numbers, each
+goes through the ordinary `convert_model()`, and the results are collapsed back
+into asterisks and brackets by comparing them digit by digit. Two options landing
+on the same hybrid digit collapse to one digit for free.
+
+**Correlated brackets are split, not flattened.** One rev5 choice can move
+several hybrid digits at once - a condenser bracket spanning air-cooled and
+water-cooled moves the outdoor coil, the condenser fan option *and* the coil
+fluid type together. Three independent brackets would describe eight machines
+when only two exist, so the pattern is emitted as two complete numbers instead,
+with a note naming the digit that forced it. Brackets driving a single digit stay
+brackets, so the split is surgical.
+
+**Wildcards** are found by a deterministic single-digit sweep (guarantees every
+one-digit dependency) plus 250 random full assignments (catches digits that only
+move when two wildcards move together). A conversion costs 0.07ms, so the whole
+thing runs in well under a second. `SEED` is fixed, so a pattern always gives the
+same answer.
+
+**Flags** are filtered to those that hold for every value of every wildcard - a
+flag raised by a placeholder digit says nothing about the pattern.
+
+### Verification
+Every real rev5 number to hand, regrouped into AHRI 9-9-10-9 form, converts to
+**exactly** what `convert_model()` produces directly - 7 of 7, across both
+cabinets and both Mt Horeb and Lido. Error paths covered: wrong slot count,
+unsupported cabinet, rev6 input, single-option bracket.
+
+### Known limitation
+A pattern carrying a literal `X` at rev5 d31 cannot resolve hybrid d34 - the ERV
+type normally comes from the submittal page text (handoff §9) and there is no
+page here. Three of the Lido units are like this. It raises an ERROR rather than
+guessing, same as the text-only mode.
 
 ---
 
