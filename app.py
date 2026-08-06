@@ -260,6 +260,12 @@ def _render_ahri(raw):
         st.error(f"{raw}: {exc}")
         return
 
+    if info.get("padded"):
+        n = info["padded"]
+        st.info(f"Pattern was {n} slot(s) short of 37, so {n} trailing wildcard(s) "
+                f"were added. Those digits are treated as unrated - if any of them "
+                f"matters, type it in explicitly.")
+
     for d, opts, moved in info.get("split_on", []):
         st.warning(
             f"rev5 d{d} {opts} moves hybrid "

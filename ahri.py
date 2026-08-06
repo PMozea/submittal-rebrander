@@ -66,9 +66,19 @@ def digit_no(ordinal):
 
 
 def parse(pattern):
-    """-> [(ordinal, digit_no, kind, value)]; kind is fix / alt / wild."""
+    """-> ([(ordinal, digit_no, kind, value)], slots_padded); kind is fix/alt/wild.
+
+    A pattern that stops short is padded with trailing wildcards rather than
+    refused. Trailing asterisks get trimmed somewhere upstream - AHRI's own
+    69-digit numbers arrive at both 42 and 45 slots - and padding cannot put a
+    wrong digit in the answer, because a wildcard forces anything it influences
+    to "*" rather than to a value."""
     toks = [t for seg in pattern.strip().split("-")
             for t in re.findall(r"\[[^\]]*\]|\S", seg)]
+    padded = 0
+    if len(toks) < SLOTS and SLOTS - len(toks) <= max(AHRI_GROUPS):
+        padded = SLOTS - len(toks)
+        toks += ["*"] * padded
     if len(toks) != SLOTS:
         counts = [len(re.findall(r"\[[^\]]*\]|\S", seg))
                   for seg in pattern.strip().split("-")]
@@ -98,7 +108,7 @@ def parse(pattern):
             out.append((o, digit_no(o), "alt", opts))
         else:
             out.append((o, digit_no(o), "fix", t.upper()))
-    return out
+    return out, padded
 
 
 def book_for(pattern):
@@ -286,7 +296,7 @@ def convert_ahri(pattern, _depth=0, _book=None, _rng=None):
     """
     book = _book or book_for(pattern)
     rng = _rng or random.Random(SEED)
-    slots = parse(pattern)
+    slots, padded = parse(pattern)
 
     if slots[3][3] == "G":
         raise AhriError("digit 4 is 'G' - that is a rev6 number, which is "
@@ -296,7 +306,7 @@ def convert_ahri(pattern, _depth=0, _book=None, _rng=None):
     tok, correlated, notes, blind = _render(slots, book, base, rng)
 
     if not correlated or _depth >= 4:
-        info = {"book": book, "blind": blind, "notes": notes,
+        info = {"book": book, "blind": blind, "notes": notes, "padded": padded,
                 "unsplit": [(digit_no(o), opts) for o, opts, _m in correlated]}
         return [{"rev5": _pattern_text(slots), "ahri": render_ahri(tok),
                  "hybrid": render_full(tok), "pins": {}}], info
@@ -316,5 +326,5 @@ def convert_ahri(pattern, _depth=0, _book=None, _rng=None):
             raise AhriError(
                 f"this pattern splits into more than {MAX_RESULTS} numbers - "
                 f"narrow the brackets and run it again")
-    info = dict(info or {}, split_on=[(digit_no(o), opts, sorted(m + 1 for m in moved))])
+    info = dict(info or {}, padded=padded, split_on=[(digit_no(o), opts, sorted(m + 1 for m in moved))])
     return results, info
