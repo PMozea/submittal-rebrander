@@ -254,22 +254,33 @@ def convert_rev5(model, text=""):
     put((23, 24), wc, wn, f"{wl} -> {wc}")
 
     # --- exhaust fan: rev5 d29 (HP) + d27 (type & dampers) + d28 (wheel)
+    # d27 = C was added after the codebooks were issued, so resolve its
+    # description first - the OAB exhaust-HP table picks its column from it.
+    late = M.D27_LATE.get(g(27))
+    pmt = late[0] if late else desc(book, (27,), g(27))
     if book == "OAB5":
-        pmt = desc(book, (27,), g(27))
-        fam = "DD" if "direct" in (pmt or "").lower() else ("ECM" if "ecm" in (pmt or "").lower() else "BELT")
+        low_pmt = (pmt or "").lower()
+        fam = "DD" if "direct" in low_pmt else ("ECM" if "ecm" in low_pmt else "BELT")
         ehp = OAB5_HP[fam].get(g(29)) if g(29) != "0" else "No Powered Exhaust"
     else:
-        pmt = desc(book, (27,), g(27))
         ehp = desc(book, (29,), g(29))
     h25 = hyb_lookup((25,), ehp)
     put((25,), h25 or ("0" if g(29) == "0" else "X"),
-        "ok" if h25 else "CHECK", ehp)
-    c26, n26 = motor_type(pmt)
-    put((26,), c26, n26, pmt)
-    d39 = "0"
-    for key, code in M.EXHAUST_DAMPER:
-        if key in (pmt or "").lower():
-            d39 = code
+        "ok" if h25 else "CHECK",
+        ehp if ehp else desc_miss(book, (29,), g(29)))
+    if late:
+        c26, d39 = late[1], late[2]
+        n26 = "ok" if g(4) == "F" else "CHECK"
+        why26 = pmt if g(4) == "F" else (
+            pmt + f"  - only valid on an indoor WSHP, but rev5 d4={g(4)}")
+        put((26,), c26, n26, why26)
+    else:
+        c26, n26 = motor_type(pmt)
+        put((26,), c26, n26, pmt if pmt else desc_miss(book, (27,), g(27)))
+        d39 = "0"
+        for key, code in M.EXHAUST_DAMPER:
+            if key in (pmt or "").lower():
+                d39 = code
     ewl = desc(book, (28,), g(28))
     ewc, ewn = M.wheel_code(ewl)
     put((27, 28), ewc, ewn, f"{ewl} -> {ewc}")

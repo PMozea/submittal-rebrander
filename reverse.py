@@ -268,7 +268,15 @@ def reverse(model):
     # exhaust motor type + dampers recombine into rev5 d27
     damper = {"A": "gravity", "B": "isolation", "C": "barometric"}.get(g(39), "")
     d27 = None
-    for code, vals in (BOOKS[book].get((27,)) or ("", {}))[1].items():
+    # "Direct Drive w/VFD (NO PE Damper)" - added to rev5 after the codebooks
+    # were issued, and only offered on an indoor WSHP (ducted exhaust).
+    if g(25) != "0" and g(39) == "0" and D.get((4,)) == "F":
+        d27 = "C"
+        out["logic"].append(
+            "digit 27 = C (Direct Drive w/VFD, NO PE Damper) - indoor WSHP with "
+            "no exhaust damper")
+    for code, vals in ((BOOKS[book].get((27,)) or ("", {}))[1].items()
+                       if d27 is None else []):
         t = vals[0].lower()
         if g(25) == "0" and "no powered exhaust" in t:
             d27 = code; break

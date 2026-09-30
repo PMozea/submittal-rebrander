@@ -222,3 +222,33 @@ these to the repo root — a stale `modelswap_old.py` next to `modelswap.py` is
 exactly the sort of thing that gets imported by accident.
 
     python check_modelswap.py Virtua_Mt__Holly.pdf
+
+---
+
+## 5. `d27 = C` — Direct Drive w/VFD (NO PE Damper)   [added after the above]
+
+New rev5 option, in neither `cur.xlsx` codebook. Only offered on an **indoor
+WSHP (d4 = F)**, where the exhaust is ducted and so takes no damper.
+
+- **`mapping.py`**: `D27_LATE` — the description plus its two hybrid targets.
+- **`convert.py`**: resolved *before* the OAB exhaust-HP column is chosen. That
+  ordering matters: `desc()` returns None for `C`, so the old code fell to the
+  BELT column and read `E` as 10 HP instead of 1 HP. Now gives hybrid
+  **d26 = 1** and **d39 = 0**, and CHECKs if d4 is not F.
+- **`reverse.py`**: hybrid d26 = 1 with d39 = 0 on an indoor WSHP → rev5 d27 = C.
+
+`OABF108D3-D1B3G1KM-D3D00AFCKE6B22C0C500` converts to
+`OABG009F1-DAB8GJD00-H1ADA1AD3-24B20B030-A01000000-BA1000000-10AM00000`
+(d25=A, d26=1, d27,28=AD, d39=0) and round-trips back byte-identical.
+
+### Separately: `Updated_Model_Number_Conversion_2026.xlsx` (the 39→rev6 sheet)
+
+Its only rule for `C` is `MID($A2,3,2)="NF"`, which matches characters 3-4
+literally and so fires on **cabinet N only**. A cabinet-B indoor WSHP fails on
+four digits at once (25, 26, 27, 39 → `X`); D/K fail on digit 39. A corrected
+copy was produced: the B/G gate `OR(27="1","A","B")` gains `,="C"` (88,256
+occurrences) and the `"NF"` test becomes cabinet-independent (6,304).
+
+Unfixed in that sheet, flagged not changed: its B/G wheel branch maps `K → AE`,
+but OAB d28 `K` is a 140.6 wheel = 14" 60% width = **`AD`**; `AE` is 16".
+Neighbouring `J → AB` and `L → AS` are both correct.

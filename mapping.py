@@ -125,6 +125,12 @@ MOTOR_TYPE = [
 
 EXHAUST_DAMPER = [("gravity", "A"), ("barometric", "C"), ("isolation", "B")]
 
+# Added to the rev5 nomenclature after the codebook spreadsheets were issued:
+#   d27 = C  "Direct Drive w/VFD (NO PE Damper)"
+# Only offered on an indoor WSHP (d4 = F), where the exhaust is ducted and so
+# takes no damper. Maps to hybrid d26 = 1 (Direct Drive ODP w/VFD) and d39 = 0.
+D27_LATE = {"C": ("Direct Drive w/VFD (NO PE Damper)", "1", "0")}
+
 # rev5 d24 -> hybrid d42
 CORROSIVE = {
     "0": ("0", "ok"),
